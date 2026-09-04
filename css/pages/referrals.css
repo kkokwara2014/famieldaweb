@@ -1,0 +1,76 @@
+.referral-trial {
+  margin-bottom: var(--space-16);
+}
+
+.referral-share {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(16rem, 0.8fr);
+  gap: var(--space-12);
+  margin-bottom: var(--space-16);
+}
+
+.referral-code {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  align-items: center;
+  margin: var(--space-8) 0;
+}
+
+.referral-code strong {
+  font-size: 1.35rem;
+  letter-spacing: 0.08em;
+}
+
+.referral-share-row {
+  display: flex;
+  gap: var(--space-6);
+  align-items: stretch;
+}
+
+.referral-share-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.referral-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-top: var(--space-8);
+}
+
+.referral-list {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.referral-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-12);
+}
+
+.referral-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  flex-shrink: 0;
+}
+
+.referral-note {
+  margin-top: var(--space-16);
+}
+
+@media (max-width: 900px) {
+  .referral-share,
+  .referral-card {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .referral-card__actions {
+    justify-content: flex-start;
+  }
+}

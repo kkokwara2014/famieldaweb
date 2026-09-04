@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Senior care hub — Famielda</title>
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/forms.css">
+  <link rel="stylesheet" href="../css/pages/dashboard.css">
+  <link rel="stylesheet" href="../css/pages/schedule.css">
+  <link rel="stylesheet" href="../css/pages/senior.css">
+  <link rel="stylesheet" href="../css/pages/messages.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+</head>
+<body class="app-body">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-sidebar-overlay" data-sidebar-overlay hidden></div>
+  <div class="app-layout" data-app-layout>
+    <aside class="app-sidebar" id="app-sidebar" data-app-sidebar></aside>
+    <div class="app-content">
+      <header class="app-topbar" data-app-topbar></header>
+      <main id="main" class="app-main" data-app-page>
+        <div data-senior-page></div>
+      </main>
+    </div>
+  </div>
+
+  <input id="senior-photo-file" class="visually-hidden" type="file" accept="image/*" aria-label="Choose a profile picture">
+
+  <div class="modal" data-modal="contact" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="contact-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="contact-title">Emergency contact</h2>
+      <p class="modal__body">Someone the circle can reach quickly if help is needed.</p>
+      <div id="contact-error" class="alert alert--error" hidden role="alert"></div>
+      <form class="form" data-contact-form>
+        <input type="hidden" name="contactId" value="">
+        <div class="field">
+          <label for="contact-name">Full name</label>
+          <input id="contact-name" name="name" type="text" required placeholder="Sarah Walsh">
+        </div>
+        <div class="field">
+          <label for="contact-relationship">Relationship</label>
+          <input id="contact-relationship" name="relationship" type="text" required placeholder="Daughter">
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="contact-phone">Phone</label>
+            <input id="contact-phone" name="phone" type="tel" required placeholder="(410) 555-0142">
+          </div>
+          <div class="field">
+            <label for="contact-email">Email</label>
+            <input id="contact-email" name="email" type="email" placeholder="family@example.com">
+          </div>
+        </div>
+        <label class="checkbox">
+          <input type="checkbox" name="isPrimary">
+          Primary emergency contact
+        </label>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save contact</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="care-plan" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="care-plan-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="care-plan-title">Create plan</h2>
+      <p class="modal__body">A living plan the circle can follow — goals, notes, and assigned work.</p>
+      <div id="care-plan-error" class="alert alert--error" hidden role="alert"></div>
+      <form class="form" data-plan-form>
+        <input type="hidden" name="planId" value="">
+        <div class="field">
+          <label for="plan-title">Plan name</label>
+          <input id="plan-title" name="title" type="text" required placeholder="Daily support plan">
+        </div>
+        <div class="field">
+          <label for="plan-goal">Goal</label>
+          <textarea id="plan-goal" name="goal" rows="2" placeholder="Keep mornings unhurried and blood pressure in range."></textarea>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="plan-status">Status</label>
+            <select id="plan-status" name="status"></select>
+          </div>
+          <div class="field">
+            <label for="plan-start">Start date</label>
+            <input id="plan-start" name="startDate" type="date">
+          </div>
+        </div>
+        <div class="field">
+          <label for="plan-end">End date</label>
+          <input id="plan-end" name="endDate" type="date">
+        </div>
+        <div class="field">
+          <label for="plan-notes">Notes</label>
+          <textarea id="plan-notes" name="notes" rows="3" placeholder="Anything the circle should keep in mind."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save plan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="care-task" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="care-task-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="care-task-title">Create task</h2>
+      <p class="modal__body">Set a priority, due date, how often it repeats, and who should do it.</p>
+      <div id="care-task-error" class="alert alert--error" hidden role="alert"></div>
+      <form class="form" data-task-form>
+        <input type="hidden" name="taskId" value="">
+        <div class="field">
+          <label for="task-plan">Care plan</label>
+          <select id="task-plan" name="planId"></select>
+        </div>
+        <div class="field">
+          <label for="task-title">Task</label>
+          <input id="task-title" name="title" type="text" required placeholder="Evening blood pressure">
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="task-category">Category</label>
+            <select id="task-category" name="category"></select>
+          </div>
+          <div class="field">
+            <label for="task-priority">Priority</label>
+            <select id="task-priority" name="priority"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="task-frequency">Repeat</label>
+            <select id="task-frequency" name="frequency"></select>
+          </div>
+          <div class="field">
+            <label for="task-due">Due date</label>
+            <input id="task-due" name="dueDate" type="date">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="task-time">Time</label>
+            <input id="task-time" name="dueTime" type="time">
+          </div>
+          <div class="field" data-repeat-until-field hidden>
+            <label for="task-until">Repeat until</label>
+            <input id="task-until" name="repeatUntil" type="date">
+          </div>
+        </div>
+        <div class="field" data-weekday-field hidden>
+          <label for="task-weekday">Weekday</label>
+          <select id="task-weekday" name="weekday"></select>
+        </div>
+        <div class="field">
+          <label for="task-assignee">Assign to</label>
+          <select id="task-assignee" name="assignedCaregiverId"></select>
+        </div>
+        <div class="field">
+          <label for="task-notes">Notes</label>
+          <textarea id="task-notes" name="notes" rows="2" placeholder="How this should be done."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save task</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="appointment" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="appointment-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="appointment-title">Create appointment</h2>
+      <p class="modal__body">Set the date, clinician, reminder, and status so the circle can show up ready.</p>
+      <div id="appointment-error" class="alert alert--error" hidden role="alert"></div>
+      <form class="form" data-appointment-form>
+        <input type="hidden" name="appointmentId" value="">
+        <div class="field">
+          <label for="appointment-name">Appointment</label>
+          <input id="appointment-name" name="title" type="text" required placeholder="Cardiology follow-up">
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="appointment-date">Date</label>
+            <input id="appointment-date" name="date" type="date" required>
+          </div>
+          <div class="field">
+            <label for="appointment-time">Time</label>
+            <input id="appointment-time" name="time" type="time" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="appointment-end">End time</label>
+            <input id="appointment-end" name="endTime" type="time">
+          </div>
+          <div class="field">
+            <label for="appointment-status">Status</label>
+            <select id="appointment-status" name="status"></select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="appointment-location">Location</label>
+          <input id="appointment-location" name="location" type="text" placeholder="GBMC in Towson, or home">
+        </div>
+        <div class="field">
+          <label for="appointment-practitioner">Practitioner</label>
+          <select id="appointment-practitioner" name="practitionerId"></select>
+        </div>
+        <div class="field">
+          <label for="appointment-reminder">Reminder</label>
+          <select id="appointment-reminder" name="reminder"></select>
+        </div>
+        <div class="field">
+          <label for="appointment-notes">Notes</label>
+          <textarea id="appointment-notes" name="notes" rows="2" placeholder="Who is driving, what to bring, or how to prepare."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Close</button>
+          <button class="btn btn--primary" type="submit">Save appointment</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="medication" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="medication-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="medication-title">Add medication</h2>
+      <p class="modal__body">Keep a shared household list — name, dosage, how often, and when it starts. This is not a prescription or a diagnosis.</p>
+      <div id="medication-error" class="alert alert--error" hidden role="alert"></div>
+      <form class="form" data-medication-form>
+        <input type="hidden" name="medicationId" value="">
+        <div class="field">
+          <label for="medication-name">Medication name</label>
+          <input id="medication-name" name="name" type="text" required placeholder="Lisinopril">
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="medication-dosage">Dosage</label>
+            <input id="medication-dosage" name="dosage" type="text" required placeholder="10mg">
+          </div>
+          <div class="field">
+            <label for="medication-frequency">Frequency</label>
+            <select id="medication-frequency" name="frequency"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="medication-time">Time</label>
+            <input id="medication-time" name="time" type="time">
+          </div>
+          <div class="field" data-second-time-field hidden>
+            <label for="medication-second">Second time</label>
+            <input id="medication-second" name="secondTime" type="time">
+          </div>
+        </div>
+        <div class="field" data-third-time-field hidden>
+          <label for="medication-third">Third time</label>
+          <input id="medication-third" name="thirdTime" type="time">
+        </div>
+        <div class="field" data-med-weekday-field hidden>
+          <label for="medication-weekday">Weekday</label>
+          <select id="medication-weekday" name="weekday"></select>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="medication-start">Start date</label>
+            <input id="medication-start" name="startDate" type="date" required>
+          </div>
+          <div class="field">
+            <label for="medication-end">End date</label>
+            <input id="medication-end" name="endDate" type="date">
+          </div>
+        </div>
+        <div class="field">
+          <label for="medication-reminder">Reminder</label>
+          <select id="medication-reminder" name="reminder"></select>
+        </div>
+        <div class="field">
+          <label for="medication-responsible">Who is covering</label>
+          <select id="medication-responsible" name="responsibleId"></select>
+        </div>
+        <div class="field">
+          <label for="medication-clinician">Clinician on the record</label>
+          <select id="medication-clinician" name="clinicianId"></select>
+        </div>
+        <div class="field">
+          <label for="medication-notes">Coordination notes</label>
+          <textarea id="medication-notes" name="notes" rows="2" placeholder="With breakfast. Glass of water. Not medical instructions."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Close</button>
+          <button class="btn btn--primary" type="submit">Save medication</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="history-note" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="history-note-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="history-note-title">Add a care note</h2>
+      <p class="modal__body">This lands on the timeline so the circle can see what already happened.</p>
+      <div id="history-note-error" class="alert alert--error" hidden role="alert"></div>
+      <form class="form" data-history-note-form>
+        <div class="field">
+          <label for="history-note-body">Note</label>
+          <textarea id="history-note-body" name="body" rows="4" required placeholder="Maya checked in. Morning medication taken with tea."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save to timeline</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="document" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="document-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="document-title">Upload document</h2>
+      <p class="modal__body">The file stays in private Firebase Storage. Choose who on the circle may open it — Famielda will not create a public link.</p>
+      <div id="document-error" class="alert alert--error" hidden role="alert"></div>
+      <form class="form" data-document-form>
+        <input type="hidden" name="documentId" value="">
+        <div class="field">
+          <label for="document-file">File</label>
+          <input id="document-file" name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.doc,.docx,application/pdf,image/*">
+          <p class="hint" data-document-file-hint>PDF, image, Word, or text. Up to 12 MB. Required for a new upload.</p>
+        </div>
+        <div class="field">
+          <label for="document-name">Title</label>
+          <input id="document-name" name="title" type="text" required placeholder="Advance directive">
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="document-category">Category</label>
+            <select id="document-category" name="category"></select>
+          </div>
+          <div class="field">
+            <label for="document-visibility">Who can open this</label>
+            <select id="document-visibility" name="visibility"></select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="document-status">Status</label>
+          <select id="document-status" name="status"></select>
+        </div>
+        <div class="field">
+          <label for="document-notes">Notes</label>
+          <textarea id="document-notes" name="notes" rows="2" placeholder="Where the original is kept, or what the circle should know."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save document</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="document-preview" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="document-preview-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="document-preview-title">Document</h2>
+      <p class="modal__body" data-document-preview-meta></p>
+      <div id="document-preview-error" class="alert alert--error" hidden role="alert"></div>
+      <p class="person__meta" data-document-preview-notes></p>
+      <div class="document-preview" data-document-preview-frame>
+        <p class="person__meta">No file is attached yet.</p>
+      </div>
+      <div class="modal__actions">
+        <button class="btn btn--ghost" type="button" data-close-modal>Close</button>
+        <button class="btn btn--primary" type="button" data-document-preview-download hidden>Download</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="upgrade" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="upgrade-title">Famielda Plus needed</h2>
+      <p class="modal__body" data-upgrade-body>Medication management is a Famielda Plus feature. Plus keeps a shared list — not a prescription.</p>
+      <div class="modal__actions">
+        <button class="btn btn--ghost" type="button" data-close-modal>Not now</button>
+        <a class="btn btn--primary" href="settings.html?tab=plans">Upgrade to Plus</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="care-report-print" class="care-report-print" hidden></div>
+
+  <script type="module" src="../js/pages/senior.js"></script>
+</body>
+</html>

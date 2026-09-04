@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Family dashboard — Famielda</title>
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/forms.css">
+  <link rel="stylesheet" href="../css/pages/dashboard.css">
+  <link rel="stylesheet" href="../css/pages/role-workspace.css">
+  <link rel="stylesheet" href="../css/pages/notifications.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+</head>
+<body class="app-body">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-sidebar-overlay" data-sidebar-overlay hidden></div>
+  <div class="app-layout" data-app-layout>
+    <aside class="app-sidebar" id="app-sidebar" data-app-sidebar></aside>
+    <div class="app-content">
+      <header class="app-topbar" data-app-topbar></header>
+      <main id="main" class="app-main" data-app-page>
+        <div class="welcome">
+          <div>
+            <div class="workspace-kicker">
+              <p class="page-kicker">Family workspace</p>
+              <span class="badge badge--brand" data-role-label>Family Member</span>
+            </div>
+            <h2 data-welcome>Welcome back</h2>
+            <p class="page-lead" data-welcome-lead>One view of your senior’s care — coverage, the day, and the people around them.</p>
+            <div class="onboard-focus" data-onboarding-focus hidden></div>
+          </div>
+          <div class="welcome-actions">
+            <a class="btn btn--ghost" href="referrals.html">Invite family</a>
+            <a class="btn btn--ghost" href="schedule.html" data-welcome-secondary>Request a visit</a>
+            <a class="btn btn--primary" href="senior.html" data-welcome-primary>Open care hub</a>
+          </div>
+        </div>
+
+        <div class="stat-grid">
+          <article class="stat-card">
+            <p class="stat-card__label">Today’s tasks</p>
+            <p class="stat-card__value" data-stat-tasks>—</p>
+            <p class="stat-card__hint" data-stat-tasks-hint>Loading</p>
+          </article>
+          <article class="stat-card">
+            <p class="stat-card__label">Appointments</p>
+            <p class="stat-card__value" data-stat-appointments>—</p>
+            <p class="stat-card__hint" data-stat-appointments-hint>This week</p>
+          </article>
+          <article class="stat-card">
+            <p class="stat-card__label">Care circle</p>
+            <p class="stat-card__value" data-stat-circle>—</p>
+            <p class="stat-card__hint" data-stat-circle-hint>Household</p>
+          </article>
+          <article class="stat-card">
+            <p class="stat-card__label">Unread alerts</p>
+            <p class="stat-card__value" data-stat-alerts>—</p>
+            <p class="stat-card__hint" data-stat-alerts-hint>Inbox</p>
+          </article>
+        </div>
+
+        <div data-incoming-invites></div>
+
+        <div class="family-board" data-dashboard-board>
+          <section class="card" data-board-section="senior" aria-labelledby="senior-summary-title">
+            <div class="card__header">
+              <h2 id="senior-summary-title">Senior summary</h2>
+              <a href="senior.html?section=reports">Reports</a>
+            </div>
+            <div data-senior-summary></div>
+          </section>
+
+          <section class="card care-status" data-care-status-card data-board-section="care-status" aria-labelledby="care-status-title">
+            <div class="card__header">
+              <h2 id="care-status-title">Care status</h2>
+              <span class="badge" data-care-status-badge>Status</span>
+            </div>
+            <div data-care-status></div>
+          </section>
+
+          <section class="card" data-board-section="tasks" aria-labelledby="todays-tasks-title">
+            <div class="card__header">
+              <h2 id="todays-tasks-title">Today’s tasks</h2>
+              <a href="senior.html?section=tasks">Open tasks</a>
+            </div>
+            <div data-todays-tasks></div>
+          </section>
+
+          <section class="card" data-board-section="appointments" aria-labelledby="appointments-title">
+            <div class="card__header">
+              <h2 id="appointments-title">Upcoming appointments</h2>
+              <a href="senior.html?section=appointments">Appointments</a>
+            </div>
+            <div data-appointments></div>
+          </section>
+
+          <section class="card" data-board-section="caregivers" aria-labelledby="caregiver-status-title">
+            <div class="card__header">
+              <h2 id="caregiver-status-title">Caregiver status</h2>
+              <a href="schedule.html">Schedule</a>
+            </div>
+            <div data-caregiver-status></div>
+          </section>
+
+          <section class="card" data-board-section="practitioners" aria-labelledby="practitioner-status-title">
+            <div class="card__header">
+              <h2 id="practitioner-status-title">Practitioner status</h2>
+              <a href="senior.html?section=practitioners">Care team</a>
+            </div>
+            <div data-practitioner-status></div>
+          </section>
+
+          <section class="card" data-board-section="activities" aria-labelledby="activities-title">
+            <div class="card__header">
+              <h2 id="activities-title">Recent activities</h2>
+              <a href="senior.html?section=history">Care history</a>
+            </div>
+            <div data-activities></div>
+          </section>
+
+          <section class="card" data-board-section="notifications" aria-labelledby="notifications-title">
+            <div class="card__header">
+              <h2 id="notifications-title">Notifications</h2>
+              <a href="notifications.html">Inbox</a>
+            </div>
+            <div data-notifications></div>
+          </section>
+
+          <section class="card" data-board-section="messages" aria-labelledby="messages-title">
+            <div class="card__header">
+              <h2 id="messages-title">Messages</h2>
+              <a href="messages.html">Inbox</a>
+            </div>
+            <div data-messages></div>
+          </section>
+
+          <section class="card" data-board-section="circle" aria-labelledby="circle-summary-title">
+            <div class="card__header">
+              <h2 id="circle-summary-title">Care-circle summary</h2>
+              <a href="care-circle.html">Manage</a>
+            </div>
+            <div data-circle-summary></div>
+          </section>
+
+          <section class="card" data-board-section="subscription" aria-labelledby="subscription-title">
+            <div class="card__header">
+              <h2 id="subscription-title">Subscription status</h2>
+              <a href="settings.html?tab=plans">Manage</a>
+            </div>
+            <div data-subscription></div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script type="module" src="../js/pages/dashboard.js"></script>
+</body>
+</html>

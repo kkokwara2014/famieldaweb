@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Account action — Famielda</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/forms.css">
+  <link rel="stylesheet" href="css/pages/auth.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body class="auth-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header" data-public-header></header>
+  <main id="main">
+    <div class="auth-layout">
+      <aside class="auth-panel">
+        <img class="brand__logo" src="assets/images/logo.png" alt="Famielda" width="48" height="48" decoding="async" fetchpriority="high">
+        <div>
+          <p class="page-kicker" style="color:#d6c7f5">Secure account</p>
+          <h2>Finish the email action for this Famielda login.</h2>
+          <p>Password resets and email verification use the same Firebase account as the mobile app.</p>
+        </div>
+      </aside>
+      <div class="auth-card">
+        <header>
+          <p class="page-kicker">Account action</p>
+          <h1 data-action-title>Opening your link</h1>
+          <p data-action-lead>Hold on while Famielda checks this email action.</p>
+        </header>
+        <div id="action-error" class="alert alert--error" hidden role="alert"></div>
+        <div id="action-success" class="alert alert--success" hidden role="status"></div>
+        <div id="status-panel" class="loader-block">
+          <span class="loader loader--lg" role="status" aria-label="Loading"></span>
+          <p>Checking this link…</p>
+        </div>
+        <div id="reset-panel" hidden>
+          <p class="person__meta">Resetting password for <strong data-reset-email></strong></p>
+          <form id="reset-form" class="form" novalidate>
+            <div class="field">
+              <label for="password">New password</label>
+              <div class="password-field">
+                <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters">
+                <button type="button" class="password-field__toggle" aria-label="Show password" aria-pressed="false"></button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="confirm">Confirm password</label>
+              <div class="password-field">
+                <input id="confirm" name="confirm" type="password" autocomplete="new-password" required placeholder="Re-enter your password">
+                <button type="button" class="password-field__toggle" aria-label="Show password" aria-pressed="false"></button>
+              </div>
+            </div>
+            <button class="btn btn--primary btn--block" type="submit">Save new password</button>
+          </form>
+        </div>
+        <div id="message-panel" hidden>
+          <p class="auth-switch">
+            <a href="login.html">Sign in</a>
+            · <a href="forgot-password.html">Request a new link</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer" data-public-footer></footer>
+  <script type="module" src="js/pages/auth-action.js"></script>
+</body>
+</html>

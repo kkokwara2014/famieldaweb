@@ -1,0 +1,68 @@
+.onboard {
+  width: min(100% - 2rem, 52rem);
+  margin: 2.25rem auto 4.5rem;
+}
+
+.onboard__panel {
+  background: #fff;
+  border: 1px solid var(--color-line);
+  border-radius: 1.5rem;
+  box-shadow: var(--shadow-md);
+  padding: 2.1rem 1.85rem 1.85rem;
+}
+
+.onboard__panel header {
+  margin-bottom: var(--space-12);
+}
+
+.onboard__panel h1 {
+  margin-bottom: 0.35rem;
+  font-size: clamp(1.7rem, 3vw, 2.05rem);
+}
+
+.onboard__actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+  flex-wrap: wrap;
+}
+
+.onboard__actions .btn {
+  min-width: 8.5rem;
+}
+
+@media (max-width: 860px) {
+  .choice-grid--roles {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .onboard__panel {
+    padding: 1.5rem 1.15rem 1.25rem;
+  }
+
+  .choice-grid,
+  .choice-grid--roles {
+    grid-template-columns: 1fr;
+  }
+
+  .stepper {
+    flex-wrap: wrap;
+  }
+
+  .stepper__rule {
+    display: none;
+  }
+
+  .onboard__actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .onboard__actions .btn {
+    width: 100%;
+  }
+}

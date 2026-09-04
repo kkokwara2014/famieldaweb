@@ -1,0 +1,17 @@
+.workspace-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.workspace-kicker .page-kicker {
+  margin-bottom: 0;
+}
+
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}

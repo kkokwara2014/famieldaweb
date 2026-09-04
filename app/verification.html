@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Professional verification — Famielda</title>
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/forms.css">
+  <link rel="stylesheet" href="../css/pages/verification.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+</head>
+<body class="app-body">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-sidebar-overlay" data-sidebar-overlay hidden></div>
+  <div class="app-layout" data-app-layout>
+    <aside class="app-sidebar" id="app-sidebar" data-app-sidebar></aside>
+    <div class="app-content">
+      <header class="app-topbar" data-app-topbar></header>
+      <main id="main" class="app-main" data-app-page>
+        <div class="welcome">
+          <div>
+            <p class="page-kicker">Professional verification</p>
+            <h2>Credentials families can trust</h2>
+            <p class="page-lead">Caregivers and health practitioners upload identity and license documents. Famielda reviews them before the verified badge appears on the circle.</p>
+          </div>
+          <span class="badge badge--neutral" data-verify-status>Pending</span>
+        </div>
+        <ol class="verify-stepper" data-verify-stepper aria-label="Verification progress"></ol>
+        <div data-verify-banner></div>
+        <div class="verify-grid">
+          <section class="card">
+            <h2>License and credential</h2>
+            <p class="person__meta">This is the number families and admins will match against your uploaded card.</p>
+            <form class="form" data-verify-profile-form>
+              <div class="field-row">
+                <div class="field">
+                  <label for="license-number">License or certification number</label>
+                  <input id="license-number" name="licenseNumber" autocomplete="off" placeholder="CNA-48291">
+                </div>
+                <div class="field">
+                  <label for="license-state">State or board</label>
+                  <input id="license-state" name="licenseState" autocomplete="off" placeholder="MD">
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="license-expires">Expires</label>
+                  <input id="license-expires" name="licenseExpiresAt" type="date">
+                </div>
+                <div class="field">
+                  <label for="license-issuer">Issuing body</label>
+                  <input id="license-issuer" name="issuer" placeholder="Maryland Board of Nursing">
+                </div>
+              </div>
+              <div class="field">
+                <label for="license-notes">Notes for the reviewer</label>
+                <textarea id="license-notes" name="notes" rows="3" placeholder="Where you practice, agency, or anything an admin should know."></textarea>
+              </div>
+              <button class="btn btn--primary" type="submit">Save credential</button>
+            </form>
+          </section>
+          <section class="card">
+            <h2>Verification documents</h2>
+            <p class="person__meta">Upload an identity document plus a license or certification. PDFs and images, up to 12 MB.</p>
+            <form class="form" data-verify-doc-form>
+              <div class="field">
+                <label for="doc-kind">Document type</label>
+                <select id="doc-kind" name="kind"></select>
+              </div>
+              <div class="field">
+                <label for="doc-title">Title</label>
+                <input id="doc-title" name="title" placeholder="CNA certificate">
+              </div>
+              <div class="field">
+                <label for="doc-file">File</label>
+                <input id="doc-file" name="file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.heic,.txt,.doc,.docx,application/pdf,image/*">
+              </div>
+              <button class="btn btn--ghost" type="submit">Upload document</button>
+            </form>
+            <div data-verify-docs></div>
+          </section>
+        </div>
+        <section class="card verify-submit">
+          <h2>Submit for review</h2>
+          <p class="person__meta" data-verify-requirements></p>
+          <button class="btn btn--primary" type="button" data-verify-submit>Submit for review</button>
+        </section>
+      </main>
+    </div>
+  </div>
+  <script type="module" src="../js/pages/verification.js"></script>
+</body>
+</html>

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Famielda UI System</title>
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/forms.css">
+  <link rel="stylesheet" href="../css/pages/ui-kit.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header" data-public-header></header>
+  <main id="main" class="ui-kit">
+    <header class="ui-kit__hero">
+      <p class="page-kicker">Module 2 — Design system</p>
+      <h1>Famielda UI System</h1>
+      <p class="page-lead">Reusable controls for the web platform, matching the mobile identity. Primary color is <code>--primary: #5E35B1</code>.</p>
+      <div class="ui-kit__swatches" aria-label="Brand colors">
+        <article class="swatch">
+          <div class="swatch__chip" style="background:var(--primary)"></div>
+          <div class="swatch__meta"><strong>Primary</strong>#5E35B1</div>
+        </article>
+        <article class="swatch">
+          <div class="swatch__chip" style="background:var(--primary-dark)"></div>
+          <div class="swatch__meta"><strong>Primary dark</strong>#4527A0</div>
+        </article>
+        <article class="swatch">
+          <div class="swatch__chip" style="background:var(--primary-mid)"></div>
+          <div class="swatch__meta"><strong>Primary mid</strong>#7E57C2</div>
+        </article>
+        <article class="swatch">
+          <div class="swatch__chip" style="background:var(--primary-soft)"></div>
+          <div class="swatch__meta"><strong>Primary soft</strong>#EDE7F6</div>
+        </article>
+      </div>
+    </header>
+
+    <div class="ui-kit__grid">
+      <section class="card ui-kit__section">
+        <div class="card__header"><h2>Buttons</h2></div>
+        <div class="ui-kit__row">
+          <button class="btn btn--primary" type="button">Primary</button>
+          <button class="btn btn--secondary" type="button">Secondary</button>
+          <button class="btn btn--ghost" type="button">Ghost</button>
+          <button class="btn btn--text" type="button">Text</button>
+          <button class="btn btn--danger" type="button">Danger</button>
+          <button class="btn btn--primary btn--sm" type="button">Small</button>
+          <button class="btn btn--primary btn--lg" type="button">Large</button>
+          <button class="btn btn--primary" type="button" data-loading-demo>Save visit</button>
+        </div>
+      </section>
+
+      <section class="card ui-kit__section">
+        <div class="card__header"><h2>Inputs &amp; selects</h2></div>
+        <form class="form ui-kit__stack" onsubmit="return false">
+          <div class="field">
+            <label for="kit-name">Full name</label>
+            <input id="kit-name" class="input" type="text" placeholder="Sarah Walsh">
+            <p class="hint">Shown to the rest of the circle.</p>
+          </div>
+          <div class="field">
+            <label for="kit-role">Role</label>
+            <select id="kit-role" class="select">
+              <option>Family</option>
+              <option>Caregiver</option>
+              <option>Admin</option>
+            </select>
+          </div>
+          <div class="field is-invalid">
+            <label for="kit-email">Email</label>
+            <input id="kit-email" class="input" type="email" value="not-an-email">
+            <p class="field-error">Enter a valid email address.</p>
+          </div>
+        </form>
+      </section>
+
+      <section class="card ui-kit__section">
+        <div class="card__header"><h2>Cards, badges, tabs</h2></div>
+        <div class="tabs" data-tabs>
+          <div class="tabs__list" role="tablist" aria-label="Card examples">
+            <button class="tabs__tab is-active" type="button" data-tab="overview" aria-selected="true">Overview</button>
+            <button class="tabs__tab" type="button" data-tab="detail" aria-selected="false">Detail</button>
+          </div>
+          <div class="tabs__panel" data-tab-panel="overview">
+            <article class="card card--interactive">
+              <div class="card__header">
+                <h3>Morning medication</h3>
+                <span class="badge badge--brand">Medication</span>
+              </div>
+              <p class="card__body">Sarah is assigned. The circle can see the time and status.</p>
+              <div class="chip-row">
+                <span class="badge badge--success">On track</span>
+                <span class="badge badge--warning">Needs ride</span>
+                <span class="badge badge--danger">Missed</span>
+                <span class="badge badge--info">Info</span>
+                <span class="badge badge--neutral">Read</span>
+              </div>
+            </article>
+          </div>
+          <div class="tabs__panel" data-tab-panel="detail" hidden>
+            <p class="person__meta">Detail tab content uses the same card and type language as the rest of the workspace.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card ui-kit__section">
+        <div class="card__header"><h2>Tables, dropdowns, modals</h2></div>
+        <div class="ui-kit__row" style="margin-bottom:1rem">
+          <div class="dropdown" data-dropdown>
+            <button class="btn btn--ghost dropdown__trigger" type="button" data-dropdown-trigger>Actions</button>
+            <div class="dropdown__menu" data-dropdown-menu role="menu">
+              <button class="dropdown__item" type="button" role="menuitem">Edit visit</button>
+              <button class="dropdown__item dropdown__item--danger" type="button" role="menuitem">Remove</button>
+            </div>
+          </div>
+          <button class="btn btn--primary" type="button" data-open-sample-modal>Open modal</button>
+          <button class="btn btn--danger" type="button" data-confirm-demo>Confirmation dialog</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table data-table--striped">
+            <thead>
+              <tr>
+                <th>Senior</th>
+                <th>Circle</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Eleanor Walsh</td>
+                <td>4 people</td>
+                <td><span class="badge badge--success">Live</span></td>
+              </tr>
+              <tr>
+                <td>Samuel Brooks</td>
+                <td>2 people</td>
+                <td><span class="badge badge--warning">Setup</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card ui-kit__section">
+        <div class="card__header"><h2>Alerts, toasts, loaders</h2></div>
+        <div class="ui-kit__stack">
+          <div class="alert alert--info">
+            <div class="alert__row">
+              <span>The circle can see this week’s visits.</span>
+              <button class="alert__dismiss" type="button" data-alert-dismiss aria-label="Dismiss">✕</button>
+            </div>
+          </div>
+          <div class="alert alert--success">Invite queued for Maya.</div>
+          <div class="alert alert--warning">A ride still needs an assignee.</div>
+          <div class="alert alert--error">Could not save the visit.</div>
+        </div>
+        <div class="ui-kit__row" style="margin-top:1rem">
+          <button class="btn btn--secondary btn--sm" type="button" data-toast="info" data-message="Saved to the workspace.">Info toast</button>
+          <button class="btn btn--secondary btn--sm" type="button" data-toast="success" data-message="Invite queued.">Success toast</button>
+          <button class="btn btn--secondary btn--sm" type="button" data-toast="warning" data-message="A ride is still open.">Warning toast</button>
+          <button class="btn btn--secondary btn--sm" type="button" data-toast="error" data-message="Could not save the visit.">Error toast</button>
+        </div>
+        <div class="loader-block">
+          <span class="loader loader--lg" role="status" aria-label="Loading"></span>
+          <p>Loading the week…</p>
+        </div>
+        <div class="skeleton">
+          <div class="skeleton__line skeleton__line--title"></div>
+          <div class="skeleton__line"></div>
+          <div class="skeleton__line skeleton__line--short"></div>
+        </div>
+      </section>
+
+      <section class="card ui-kit__section">
+        <div class="card__header"><h2>Empty &amp; error states</h2></div>
+        <div class="ui-kit__split">
+          <div class="empty-state empty-state--compact">
+            <div class="empty-state__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="5" width="16" height="14" rx="2"/>
+                <path d="M8 10h8M8 14h5"/>
+              </svg>
+            </div>
+            <h3>No visits this week</h3>
+            <p>Medications, rides, and appointments will appear here.</p>
+            <div class="empty-state__actions">
+              <a class="btn btn--primary btn--sm" href="../app/schedule.html">Open schedule</a>
+            </div>
+          </div>
+          <div class="error-state error-state--inline">
+            <div class="error-state__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="8"/>
+                <path d="M12 8v5"/>
+                <circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/>
+              </svg>
+            </div>
+            <h3>Could not load the circle</h3>
+            <p>Check your connection and try again.</p>
+            <div class="error-state__actions">
+              <a class="btn btn--ghost btn--sm" href="../app/care-circle.html">Retry</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div class="modal" data-modal="sample" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="sample-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="sample-title">Visit details</h2>
+      <p class="modal__body">Modals use the same radius, type, and primary color as the mobile sheets.</p>
+      <div class="modal__actions">
+        <button class="btn btn--ghost" type="button" data-close-modal>Close</button>
+        <button class="btn btn--primary" type="button" data-close-modal>Keep visit</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer" data-public-footer></footer>
+  <script type="module" src="../js/pages/ui-kit.js"></script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Care circle — Famielda</title>
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/forms.css">
+  <link rel="stylesheet" href="../css/pages/care-circle.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+</head>
+<body class="app-body">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-sidebar-overlay" data-sidebar-overlay hidden></div>
+  <div class="app-layout" data-app-layout>
+    <aside class="app-sidebar" id="app-sidebar" data-app-sidebar></aside>
+    <div class="app-content">
+      <header class="app-topbar" data-app-topbar></header>
+      <main id="main" class="app-main" data-app-page>
+        <div data-circle-page></div>
+      </main>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="invite" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="invite-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="invite-title">Invite to the circle</h2>
+      <p class="modal__body" data-invite-lead>They will be asked to accept before they can see the household record.</p>
+      <form class="form" data-invite-form>
+        <input type="hidden" name="kind" value="family">
+        <div class="form-row">
+          <div class="field">
+            <label for="invite-name">Full name</label>
+            <input id="invite-name" name="name" type="text" required placeholder="Maya Chen">
+          </div>
+          <div class="field">
+            <label for="invite-email">Email</label>
+            <input id="invite-email" name="email" type="email" required placeholder="maya@example.com">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="invite-relationship">Relationship</label>
+            <select id="invite-relationship" name="relationship" class="select" required></select>
+          </div>
+          <div class="field">
+            <label for="invite-role">Access</label>
+            <select id="invite-role" name="role" class="select" required></select>
+          </div>
+        </div>
+        <div class="field" data-professional-field hidden>
+          <label for="invite-type">Professional type</label>
+          <select id="invite-type" name="professionalType" class="select"></select>
+        </div>
+        <div class="field">
+          <label for="invite-message">Note <span class="hint">(optional)</span></label>
+          <textarea id="invite-message" name="message" rows="3" placeholder="Why you are asking them to join"></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Send invite</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="permissions" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="permissions-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="permissions-title">Permissions</h2>
+      <p class="modal__body" data-permissions-lead>Choose what this person can do in the circle.</p>
+      <form class="form" data-permissions-form>
+        <input type="hidden" name="memberId" value="">
+        <div class="form-row">
+          <div class="field">
+            <label for="perm-relationship">Relationship</label>
+            <select id="perm-relationship" name="relationship" class="select" required></select>
+          </div>
+          <div class="field">
+            <label for="perm-role">Access</label>
+            <select id="perm-role" name="role" class="select" required></select>
+          </div>
+        </div>
+        <fieldset class="permission-fieldset">
+          <legend>What they can do</legend>
+          <div class="permission-list" data-permission-list></div>
+        </fieldset>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save permissions</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="upgrade" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="upgrade-title">Famielda Plus needed</h2>
+      <p class="modal__body" data-upgrade-body>Free includes two family members and basic care coordination. Upgrade to Plus to invite caregivers, clinicians, and a larger household.</p>
+      <div class="modal__actions">
+        <button class="btn btn--ghost" type="button" data-close-modal>Not now</button>
+        <a class="btn btn--primary" href="settings.html?tab=plans">Upgrade to Plus</a>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../js/pages/care-circle.js"></script>
+</body>
+</html>

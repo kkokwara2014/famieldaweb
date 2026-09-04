@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Help &amp; Support — Famielda</title>
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/forms.css">
+  <link rel="stylesheet" href="../css/pages/help.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+</head>
+<body class="app-body">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-sidebar-overlay" data-sidebar-overlay hidden></div>
+  <div class="app-layout" data-app-layout>
+    <aside class="app-sidebar" id="app-sidebar" data-app-sidebar></aside>
+    <div class="app-content">
+      <header class="app-topbar" data-app-topbar></header>
+      <main id="main" class="app-main" data-app-page>
+        <div class="help-head">
+          <p class="page-lead">Answers first. If you still need a person, write to operations — tickets land in the support inbox.</p>
+          <form class="help-search" data-help-search>
+            <label class="visually-hidden" for="help-search">Search help</label>
+            <input id="help-search" name="q" type="search" data-help-search-input placeholder="Search FAQ — circle, Plus, password, visits…" autocomplete="off">
+            <button class="btn btn--primary" type="submit">Search</button>
+          </form>
+        </div>
+
+        <div class="tabs" data-tabs>
+          <div class="tabs__list" role="tablist" aria-label="Help and support">
+            <button class="tabs__tab is-active" type="button" data-tab="center" aria-selected="true">Help center</button>
+            <button class="tabs__tab" type="button" data-tab="faq" aria-selected="false">FAQ</button>
+            <button class="tabs__tab" type="button" data-tab="contact" aria-selected="false">Contact</button>
+            <button class="tabs__tab" type="button" data-tab="problem" aria-selected="false">Report</button>
+            <button class="tabs__tab" type="button" data-tab="account" aria-selected="false">Account</button>
+            <button class="tabs__tab" type="button" data-tab="subscription" aria-selected="false">Subscription</button>
+          </div>
+
+          <div class="tabs__panel" data-tab-panel="center">
+            <div class="help-center-grid">
+              <section>
+                <h2>Browse topics</h2>
+                <div data-help-topics></div>
+              </section>
+              <section class="card">
+                <div class="card__header">
+                  <h2>Your requests</h2>
+                  <span class="person__meta" data-ticket-summary></span>
+                </div>
+                <div data-ticket-list></div>
+              </section>
+            </div>
+          </div>
+
+          <div class="tabs__panel" data-tab-panel="faq" hidden data-faq-panel>
+            <div class="help-faq-toolbar">
+              <p class="person__meta" data-faq-count></p>
+              <div data-faq-filters></div>
+            </div>
+            <div data-faq-list></div>
+          </div>
+
+          <div class="tabs__panel" data-tab-panel="contact" hidden>
+            <div class="help-split">
+              <section class="card">
+                <h2>Contact support</h2>
+                <p class="person__meta">An admin will see this in the support inbox. Include the household or visit if it is about care.</p>
+                <form id="contact-support-form" class="form">
+                  <div class="alert alert--error" data-form-error hidden role="alert"></div>
+                  <div class="field">
+                    <label for="contact-subject">Subject</label>
+                    <input id="contact-subject" name="subject" required minlength="4" maxlength="140" placeholder="How can we help?">
+                  </div>
+                  <div class="form-row">
+                    <div class="field">
+                      <label for="contact-category">Topic</label>
+                      <select id="contact-category" name="category">
+                        <option value="general">General</option>
+                        <option value="care">Care workspace</option>
+                        <option value="account">Account</option>
+                        <option value="billing">Billing &amp; subscription</option>
+                        <option value="technical">Technical</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="contact-priority">Priority</label>
+                      <select id="contact-priority" name="priority">
+                        <option value="low">Low</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="contact-body">Details</label>
+                    <textarea id="contact-body" name="body" rows="5" required minlength="12" maxlength="4000" placeholder="What happened, and what do you need?"></textarea>
+                  </div>
+                  <button class="btn btn--primary" type="submit">Send to support</button>
+                </form>
+              </section>
+              <section class="card">
+                <h2>Before you write</h2>
+                <p>Search the FAQ for passwords, Plus, and circle invites. Account and billing have dedicated tabs with the common fixes.</p>
+                <p><a class="btn btn--ghost btn--sm" href="help.html?tab=faq">Open FAQ</a></p>
+              </section>
+            </div>
+          </div>
+
+          <div class="tabs__panel" data-tab-panel="problem" hidden>
+            <section class="card">
+              <h2>Report a problem</h2>
+              <p class="person__meta">Tell us what broke. We attach this page and your browser so operations can reproduce it.</p>
+              <form id="report-problem-form" class="form">
+                <div class="alert alert--error" data-form-error hidden role="alert"></div>
+                <input type="hidden" name="category" value="problem">
+                <div class="field">
+                  <label for="problem-type">What went wrong?</label>
+                  <select id="problem-type" name="problemType">
+                    <option value="page">A page will not load or looks wrong</option>
+                    <option value="data">Care data is missing or incorrect</option>
+                    <option value="schedule">A visit, overlap, or schedule change failed</option>
+                    <option value="billing">Checkout, Plus, or an invoice failed</option>
+                    <option value="notifications">Invitations or reminders are not arriving</option>
+                    <option value="other">Something else</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="problem-subject">Short summary</label>
+                  <input id="problem-subject" name="subject" required minlength="4" maxlength="140" placeholder="What should have happened?">
+                </div>
+                <div class="field">
+                  <label for="problem-body">What you did, and what you saw</label>
+                  <textarea id="problem-body" name="body" rows="5" required minlength="12" maxlength="4000" placeholder="Steps, the senior or visit if relevant, and any error text."></textarea>
+                </div>
+                <button class="btn btn--primary" type="submit">Report problem</button>
+              </form>
+            </section>
+          </div>
+
+          <div class="tabs__panel" data-tab-panel="account" hidden>
+            <div class="help-split">
+              <div>
+                <h2>Account support</h2>
+                <p class="page-lead">Password, email, role, and deleting the account. Write in if you cannot reach Settings.</p>
+                <div data-account-guides></div>
+              </div>
+              <section class="card">
+                <h2>Ask about this account</h2>
+                <p class="person__meta">Use this for a suspended login, the wrong role, or an email you can no longer open.</p>
+                <form id="account-support-form" class="form">
+                  <div class="alert alert--error" data-form-error hidden role="alert"></div>
+                  <input type="hidden" name="category" value="account">
+                  <div class="field">
+                    <label for="account-subject">Subject</label>
+                    <input id="account-subject" name="subject" required minlength="4" maxlength="140" placeholder="Account issue">
+                  </div>
+                  <div class="field">
+                    <label for="account-body">Details</label>
+                    <textarea id="account-body" name="body" rows="5" required minlength="12" maxlength="4000" placeholder="The email on the account and what you need changed."></textarea>
+                  </div>
+                  <button class="btn btn--primary" type="submit">Send account request</button>
+                </form>
+              </section>
+            </div>
+          </div>
+
+          <div class="tabs__panel" data-tab-panel="subscription" hidden>
+            <div class="help-split">
+              <div>
+                <section class="card" data-subscription-snapshot></section>
+                <h2>Subscription support</h2>
+                <p class="page-lead">Plus is activated by Stripe after payment. Use Settings for checkout, cancel, resume, and invoices.</p>
+                <div data-subscription-guides></div>
+              </div>
+              <section class="card">
+                <h2>Ask about billing</h2>
+                <p class="person__meta">Write here if checkout succeeded but Plus did not appear, or an invoice looks wrong.</p>
+                <form id="subscription-support-form" class="form">
+                  <div class="alert alert--error" data-form-error hidden role="alert"></div>
+                  <input type="hidden" name="category" value="billing">
+                  <div class="field">
+                    <label for="billing-subject">Subject</label>
+                    <input id="billing-subject" name="subject" required minlength="4" maxlength="140" placeholder="Plus or invoice question">
+                  </div>
+                  <div class="field">
+                    <label for="billing-body">Details</label>
+                    <textarea id="billing-body" name="body" rows="5" required minlength="12" maxlength="4000" placeholder="Approximate time of checkout, last four of the card if you have it, and what you see in Settings."></textarea>
+                  </div>
+                  <button class="btn btn--primary" type="submit">Send billing request</button>
+                </form>
+              </section>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script type="module" src="../js/pages/help.js"></script>
+</body>
+</html>

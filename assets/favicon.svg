@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Famielda">
+  <rect width="64" height="64" rx="14" fill="#ffffff"/>
+  <path d="M18 50L28 12h8.2c.4 0 .7.2.8.6l6.6 20.2c.2.7-.3 1.4-1 1.4h-6.2L34.8 42.6c-.2.6.2 1.2.8 1.2H42c.5 0 .8.5.7 1l-1.6 5c-.1.4-.5.7-.9.7H18z" fill="#5E35B1"/>
+  <path d="M30.4 22.2h10.8c.5 0 .8.5.7 1l-1.2 3.8c-.1.4-.5.7-.9.7H29.2c-.5 0-.8-.5-.7-1l1.1-3.8c.1-.4.5-.7.8-.7z" fill="#5E35B1"/>
+</svg>

@@ -1,0 +1,89 @@
+rules_version = '2';
+
+// Famielda Security — Module 29.
+// Household and verification files are private. Never allow public or token reads.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return isSignedIn()
+        && (!('status' in userData()) || userData().status != 'suspended');
+    }
+
+    function isAdmin() {
+      return isActiveUser() && userData().role == 'admin';
+    }
+
+    function seniorData(seniorId) {
+      return firestore.get(/databases/(default)/documents/seniors/$(seniorId)).data;
+    }
+
+    function documentData(documentId) {
+      return firestore.get(/databases/(default)/documents/documents/$(documentId)).data;
+    }
+
+    function isSeniorMember(seniorId) {
+      return isActiveUser() && (
+        seniorData(seniorId).ownerId == request.auth.uid
+        || request.auth.uid in seniorData(seniorId).memberIds
+      );
+    }
+
+    function isSeniorOwner(seniorId) {
+      return isActiveUser() && seniorData(seniorId).ownerId == request.auth.uid;
+    }
+
+    function allowedDocumentType() {
+      return request.resource.contentType.matches('application/pdf|image/.*|text/plain|application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    }
+
+    function underSizeLimit() {
+      return request.resource.size < 12 * 1024 * 1024;
+    }
+
+    function canOpenDocument(seniorId, documentId) {
+      let data = documentData(documentId);
+      let role = userData().role;
+      return isSeniorMember(seniorId)
+        && data.seniorId == seniorId
+        && (
+          seniorData(seniorId).ownerId == request.auth.uid
+          || role == 'admin'
+          || data.visibility == 'circle'
+          || (data.visibility == 'family' && role == 'family')
+          || (data.visibility == 'clinical' && (role == 'family' || role == 'health_practitioner'))
+        );
+    }
+
+    function canManageDocument(seniorId) {
+      return isSeniorOwner(seniorId)
+        || isAdmin()
+        || (isSeniorMember(seniorId) && userData().role == 'family');
+    }
+
+    match /seniors/{seniorId}/documents/{documentId}/{fileName} {
+      allow read: if canOpenDocument(seniorId, documentId);
+      allow create, update: if isSeniorMember(seniorId)
+        && underSizeLimit()
+        && allowedDocumentType();
+      allow delete: if canManageDocument(seniorId);
+    }
+
+    match /professionals/{userId}/verification/{documentId}/{fileName} {
+      allow read: if isActiveUser() && (request.auth.uid == userId || isAdmin());
+      allow create: if isActiveUser()
+        && request.auth.uid == userId
+        && underSizeLimit()
+        && allowedDocumentType();
+      allow update: if false;
+      allow delete: if isActiveUser() && (request.auth.uid == userId || isAdmin());
+    }
+  }
+}

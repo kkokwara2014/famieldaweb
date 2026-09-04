@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Schedule — Famielda</title>
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/forms.css">
+  <link rel="stylesheet" href="../css/pages/schedule.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+</head>
+<body class="app-body">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-sidebar-overlay" data-sidebar-overlay hidden></div>
+  <div class="app-layout" data-app-layout>
+    <aside class="app-sidebar" id="app-sidebar" data-app-sidebar></aside>
+    <div class="app-content">
+      <header class="app-topbar" data-app-topbar></header>
+      <main id="main" class="app-main" data-app-page>
+        <div data-schedule-page></div>
+      </main>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="request" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="request-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="request-title">Request a visit</h2>
+      <p class="modal__body" data-request-lead>The professional accepts before the time is held. Overlapping visits with another family are blocked.</p>
+      <form class="form" data-request-form>
+        <div class="field">
+          <label for="request-professional">With</label>
+          <select id="request-professional" name="professionalId" class="select" required></select>
+        </div>
+        <div class="field">
+          <label for="request-title-field" data-request-title-label>Visit</label>
+          <input id="request-title-field" name="title" type="text" required placeholder="Afternoon coverage">
+        </div>
+        <div class="form-row form-row--3">
+          <div class="field">
+            <label for="request-date">Date</label>
+            <input id="request-date" name="date" type="date" required>
+          </div>
+          <div class="field">
+            <label for="request-start">Start</label>
+            <input id="request-start" name="startTime" type="time" required>
+          </div>
+          <div class="field">
+            <label for="request-end">End</label>
+            <input id="request-end" name="endTime" type="time" required>
+          </div>
+        </div>
+        <p class="person__meta" data-request-availability></p>
+        <p class="person__meta" data-request-timezone></p>
+        <p class="alert alert--warning" data-request-conflict hidden></p>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Send request</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="availability" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="availability-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="availability-title">Your availability</h2>
+      <p class="modal__body" data-availability-lead>Families can only request inside these hours. Time off blocks a date even if the weekday is open.</p>
+      <form class="form" data-availability-form>
+        <div class="field">
+          <label for="availability-timezone">Time zone</label>
+          <select id="availability-timezone" name="timeZone" class="select" required></select>
+        </div>
+        <div class="availability-days" data-availability-days></div>
+        <fieldset class="availability-block">
+          <legend>Time off</legend>
+          <div class="form-row form-row--3">
+            <div class="field">
+              <label for="block-date">Date</label>
+              <input id="block-date" name="blockDate" type="date">
+            </div>
+            <div class="field">
+              <label for="block-start">Start</label>
+              <input id="block-start" name="blockStart" type="time">
+            </div>
+            <div class="field">
+              <label for="block-end">End</label>
+              <input id="block-end" name="blockEnd" type="time">
+            </div>
+          </div>
+        </fieldset>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save availability</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="decline" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="decline-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="decline-title">Decline this visit?</h2>
+      <p class="modal__body" data-decline-lead>The family will see that this time will not be covered.</p>
+      <form class="form" data-decline-form>
+        <input type="hidden" name="visitId" value="">
+        <div class="field">
+          <label for="decline-reason">Reason <span class="hint">(optional)</span></label>
+          <textarea id="decline-reason" name="reason" rows="3" placeholder="I am already covering another household then."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Keep request</button>
+          <button class="btn btn--danger" type="submit">Decline visit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="checkout" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="checkout-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="checkout-title">Check out</h2>
+      <p class="modal__body">A short note is saved with the visit. You can still add a full report after.</p>
+      <form class="form" data-checkout-form>
+        <input type="hidden" name="visitId" value="">
+        <div class="field">
+          <label for="checkout-note">Visit note <span class="hint">(optional)</span></label>
+          <textarea id="checkout-note" name="note" rows="3" placeholder="How the visit went."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Stay checked in</button>
+          <button class="btn btn--primary" type="submit">Check out</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="note" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="note-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="note-title">Visit note</h2>
+      <form class="form" data-note-form>
+        <input type="hidden" name="visitId" value="">
+        <div class="field">
+          <label for="note-body">Note</label>
+          <textarea id="note-body" name="body" rows="4" required placeholder="A note the family should see."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save note</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="report" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel modal__panel--lg" role="dialog" aria-modal="true" aria-labelledby="report-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="report-title">Visit report</h2>
+      <p class="modal__body">A readable picture of the visit for the family.</p>
+      <form class="form" data-report-form>
+        <input type="hidden" name="visitId" value="">
+        <div class="field">
+          <label for="report-summary">Summary</label>
+          <textarea id="report-summary" name="summary" rows="3" required placeholder="What happened, in a few sentences."></textarea>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="report-mood">Mood</label>
+            <select id="report-mood" name="mood" class="select"></select>
+          </div>
+          <div class="field">
+            <label for="report-meals">Meals</label>
+            <input id="report-meals" name="meals" type="text" placeholder="Lunch taken, water throughout">
+          </div>
+        </div>
+        <div class="field">
+          <label for="report-mobility">Mobility</label>
+          <input id="report-mobility" name="mobility" type="text" placeholder="Walker. Short garden loop.">
+        </div>
+        <div class="field">
+          <label for="report-concerns">Concerns</label>
+          <textarea id="report-concerns" name="concerns" rows="2" placeholder="Anything the family should watch."></textarea>
+        </div>
+        <div class="field">
+          <label for="report-followup">Follow-up</label>
+          <textarea id="report-followup" name="followUp" rows="2" placeholder="What should happen next."></textarea>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save report</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="modify" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modify-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="modify-title">Change this visit</h2>
+      <p class="modal__body">The new window is checked against this professional’s other families before it is saved.</p>
+      <form class="form" data-modify-form>
+        <input type="hidden" name="visitId" value="">
+        <div class="field">
+          <label for="modify-title-field">Visit</label>
+          <input id="modify-title-field" name="title" type="text" required>
+        </div>
+        <div class="form-row form-row--3">
+          <div class="field">
+            <label for="modify-date">Date</label>
+            <input id="modify-date" name="date" type="date" required>
+          </div>
+          <div class="field">
+            <label for="modify-start">Start</label>
+            <input id="modify-start" name="startTime" type="time" required>
+          </div>
+          <div class="field">
+            <label for="modify-end">End</label>
+            <input id="modify-end" name="endTime" type="time" required>
+          </div>
+        </div>
+        <p class="alert alert--warning" data-modify-conflict hidden></p>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" data-modal="extend" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="extend-title">
+      <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
+      <h2 id="extend-title">Extend this visit</h2>
+      <p class="modal__body" data-extend-lead>Extra time is blocked if it would overlap another family.</p>
+      <form class="form" data-extend-form>
+        <input type="hidden" name="visitId" value="">
+        <div class="field">
+          <label for="extend-minutes">Add</label>
+          <select id="extend-minutes" name="minutes" class="select" required>
+            <option value="15">15 minutes</option>
+            <option value="30" selected>30 minutes</option>
+            <option value="45">45 minutes</option>
+            <option value="60">1 hour</option>
+            <option value="90">1 hour 30 minutes</option>
+            <option value="120">2 hours</option>
+          </select>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+          <button class="btn btn--primary" type="submit">Extend visit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="../js/pages/schedule.js"></script>
+</body>
+</html>

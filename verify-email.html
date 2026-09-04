@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Verify email — Famielda</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/forms.css">
+  <link rel="stylesheet" href="css/pages/auth.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body class="auth-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header" data-public-header></header>
+  <main id="main">
+    <div class="auth-layout">
+      <aside class="auth-panel">
+        <img class="brand__logo" src="assets/images/logo.png" alt="Famielda" width="48" height="48" decoding="async" fetchpriority="high">
+        <div>
+          <p class="page-kicker" style="color:#d6c7f5">Confirm it is you</p>
+          <h2>Verify the email that holds this care workspace.</h2>
+          <p>One verified address is the key for Famielda Web and Famielda Mobile.</p>
+        </div>
+      </aside>
+      <div class="auth-card">
+        <header>
+          <p class="page-kicker">Email verification</p>
+          <h1>Check your inbox</h1>
+          <p>We sent a verification link to <strong data-verify-email></strong>.</p>
+        </header>
+        <div id="verify-error" class="alert alert--error" hidden role="alert"></div>
+        <div id="verify-success" class="alert alert--success" hidden role="status"></div>
+        <div class="auth-actions">
+          <button class="btn btn--primary btn--block" type="button" data-refresh>I have verified my email</button>
+          <button class="btn btn--ghost btn--block" type="button" data-resend>Resend verification email</button>
+          <button class="btn btn--text btn--block" type="button" data-sign-out>Sign out and use a different email</button>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer" data-public-footer></footer>
+  <script type="module" src="js/pages/verify-email.js"></script>
+</body>
+</html>

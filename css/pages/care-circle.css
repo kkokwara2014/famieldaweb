@@ -1,0 +1,134 @@
+.welcome .page-lead {
+  margin-bottom: 0;
+}
+
+.incoming-invites {
+  display: grid;
+  gap: var(--space-8);
+  margin-bottom: var(--space-16);
+}
+
+.incoming-invites h2 {
+  margin: 0;
+}
+
+.incoming-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-12);
+}
+
+.incoming-card h3 {
+  margin-bottom: var(--space-4);
+}
+
+.incoming-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  flex-shrink: 0;
+}
+
+.circle-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-8);
+  margin-bottom: var(--space-16);
+}
+
+.tabs {
+  margin-bottom: var(--space-12);
+}
+
+.member-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-8);
+}
+
+.member-grid .empty-state {
+  grid-column: 1 / -1;
+}
+
+.member-card {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.member-card--pending {
+  background: linear-gradient(180deg, var(--color-warning-soft), var(--color-paper) 46%);
+}
+
+.member-card__top {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-8);
+  align-items: flex-start;
+}
+
+.member-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+.member-card__access {
+  margin: 0;
+  color: var(--color-stone);
+  font-size: var(--text-sm);
+}
+
+.member-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.dropdown__item .badge {
+  margin-left: auto;
+}
+
+.permission-fieldset {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  padding: var(--space-12);
+}
+
+.permission-fieldset legend {
+  padding: 0 var(--space-4);
+  font-weight: var(--weight-medium);
+}
+
+.permission-list {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.alert a {
+  font-weight: var(--weight-semibold);
+}
+
+@media (max-width: 800px) {
+  .incoming-card,
+  .member-card__top {
+    flex-direction: column;
+  }
+
+  .member-card__badges {
+    justify-content: flex-start;
+  }
+
+  .circle-stats,
+  .member-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .circle-stats,
+  .member-grid {
+    grid-template-columns: 1fr;
+  }
+}

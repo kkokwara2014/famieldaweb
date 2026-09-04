@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="description" content="Famielda Help Center — FAQ for care circles, scheduling, accounts, and Famielda Plus.">
+  <title>FAQ — Famielda</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/images/logo.png">
+  <link rel="canonical" href="https://famielda.web.app/faq.html">
+  <link rel="sitemap" type="application/xml" title="Sitemap" href="https://famielda.web.app/sitemap.xml">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Famielda">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:title" content="FAQ — Famielda">
+  <meta property="og:description" content="Famielda Help Center — FAQ for care circles, scheduling, accounts, and Famielda Plus.">
+  <meta property="og:url" content="https://famielda.web.app/faq.html">
+  <meta property="og:image" content="https://famielda.web.app/assets/images/og-cover.jpg">
+  <meta property="og:image:alt" content="Famielda — the family care platform">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="FAQ — Famielda">
+  <meta name="twitter:description" content="Famielda Help Center — FAQ for care circles, scheduling, accounts, and Famielda Plus.">
+  <meta name="twitter:image" content="https://famielda.web.app/assets/images/og-cover.jpg">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/forms.css">
+  <link rel="stylesheet" href="css/pages/landing.css">
+  <link rel="stylesheet" href="css/pages/help.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body data-page="faq" data-seo-page="faq">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header" data-public-header></header>
+  <main id="main">
+    <section class="help-public-hero">
+      <div class="help-public-hero__inner">
+        <p class="page-kicker">Help center</p>
+        <h1>Find an answer, then write in if you still need us.</h1>
+        <p class="page-lead">FAQ for roles, the care circle, visits, accounts, and Famielda Plus. Signed-in households can contact support, report a problem, or ask about billing from Help inside the workspace.</p>
+        <form class="help-search" data-help-search>
+          <label class="visually-hidden" for="help-search">Search help</label>
+          <input id="help-search" name="q" type="search" data-help-search-input placeholder="Search — password, Plus, invitations, visits…" autocomplete="off">
+          <button class="btn btn--primary" type="submit">Search</button>
+        </form>
+        <div class="help-public-hero__actions">
+          <a class="btn btn--ghost" href="#faq">Browse FAQ</a>
+          <a class="btn btn--primary" href="contact.html">Contact us</a>
+          <a class="btn btn--ghost" data-workspace-help-href href="login.html">Open Help after you sign in</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="help-public-section">
+      <h2>Topics</h2>
+      <p class="person__meta">Start with a topic. Account, subscription, and problem reports open after you sign in.</p>
+      <div data-help-topics></div>
+    </section>
+
+    <section class="help-public-section" id="faq" data-faq-panel>
+      <div class="help-faq-toolbar">
+        <h2>FAQ</h2>
+        <p class="person__meta" data-faq-count></p>
+      </div>
+      <div data-faq-filters></div>
+      <div data-faq-list></div>
+    </section>
+
+    <section class="help-public-section" id="contact">
+      <div class="card help-public-cta">
+        <div>
+          <h2>Still stuck?</h2>
+          <p>Send a public message, or sign in to contact support, report a problem, and ask about this account or Plus. Tickets go to the Famielda operations inbox.</p>
+          <p class="person__meta" data-signin-note>Use the same email as your Famielda account.</p>
+        </div>
+        <div class="help-public-cta__actions">
+          <a class="btn btn--primary" href="contact.html">Contact us</a>
+          <a class="btn btn--ghost" data-contact-href href="login.html">Contact support</a>
+          <a class="btn btn--ghost" data-problem-href href="login.html">Report a problem</a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer" data-public-footer></footer>
+  <script type="module" src="js/pages/public-help.js"></script>
+</body>
+</html>

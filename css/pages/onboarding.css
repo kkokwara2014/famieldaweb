@@ -1,0 +1,26 @@
+.onboard__panel .form {
+  margin-top: 0.35rem;
+}
+
+.onboard-invite {
+  margin-top: var(--space-12);
+  padding: 1rem 1.1rem;
+  border: 1.5px dashed var(--color-line-strong);
+  border-radius: 1.1rem;
+  background: #fcfbfe;
+}
+
+.onboard-invite .onboard__actions {
+  margin-top: 0.9rem;
+}
+
+.onboard-focus {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0.35rem 0 var(--space-10);
+}
+
+.choice-grid--check .choice-card__check {
+  border-radius: 0.35rem;
+}

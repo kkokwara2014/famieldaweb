@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Caregiver dashboard — Famielda</title>
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/forms.css">
+  <link rel="stylesheet" href="../css/pages/dashboard.css">
+  <link rel="stylesheet" href="../css/pages/role-workspace.css">
+  <link rel="stylesheet" href="../css/pages/verification.css">
+  <link rel="stylesheet" href="../css/pages/notifications.css">
+  <link rel="stylesheet" href="../css/responsive.css">
+</head>
+<body class="app-body">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-sidebar-overlay" data-sidebar-overlay hidden></div>
+  <div class="app-layout" data-app-layout>
+    <aside class="app-sidebar" id="app-sidebar" data-app-sidebar></aside>
+    <div class="app-content">
+      <header class="app-topbar" data-app-topbar></header>
+      <main id="main" class="app-main" data-app-page>
+        <div class="welcome">
+          <div>
+            <div class="workspace-kicker">
+              <p class="page-kicker">Caregiver workspace</p>
+              <span class="badge badge--brand" data-role-label>Caregiver</span>
+            </div>
+            <h2 data-welcome>Welcome back</h2>
+            <p class="page-lead" data-welcome-lead>Your day with your senior — assignments, visits, and the circle thread.</p>
+            <div class="onboard-focus" data-onboarding-focus hidden></div>
+          </div>
+          <a class="btn btn--primary" href="schedule.html" data-welcome-primary>Open today’s week</a>
+        </div>
+        <div data-verify-banner></div>
+
+        <div class="stat-grid">
+          <article class="stat-card">
+            <p class="stat-card__label">Today’s assignments</p>
+            <p class="stat-card__value" data-stat-assignments>—</p>
+            <p class="stat-card__hint" data-stat-assignments-hint>Loading</p>
+          </article>
+          <article class="stat-card">
+            <p class="stat-card__label">Upcoming visits</p>
+            <p class="stat-card__value" data-stat-visits>—</p>
+            <p class="stat-card__hint" data-stat-visits-hint>This week</p>
+          </article>
+          <article class="stat-card">
+            <p class="stat-card__label">Open tasks</p>
+            <p class="stat-card__value" data-stat-tasks>—</p>
+            <p class="stat-card__hint" data-stat-tasks-hint>Assigned to you</p>
+          </article>
+          <article class="stat-card">
+            <p class="stat-card__label">Unread alerts</p>
+            <p class="stat-card__value" data-stat-alerts>—</p>
+            <p class="stat-card__hint" data-stat-alerts-hint>Inbox</p>
+          </article>
+        </div>
+
+        <div class="caregiver-board" data-dashboard-board>
+          <section class="card" data-board-section="assignments" aria-labelledby="assignments-title">
+            <div class="card__header">
+              <h2 id="assignments-title">Today’s assignments</h2>
+              <a href="schedule.html">Open week</a>
+            </div>
+            <div data-todays-assignments></div>
+          </section>
+
+          <section class="card" data-board-section="schedule-requests" aria-labelledby="schedule-requests-title">
+            <div class="card__header">
+              <h2 id="schedule-requests-title">Schedule requests</h2>
+              <a href="schedule.html">All requests</a>
+            </div>
+            <div data-schedule-requests></div>
+          </section>
+
+          <section class="card" data-board-section="visits" aria-labelledby="upcoming-visits-title">
+            <div class="card__header">
+              <h2 id="upcoming-visits-title">Upcoming visits</h2>
+              <a href="senior.html?section=schedule">Schedule</a>
+            </div>
+            <div data-upcoming-visits></div>
+          </section>
+
+          <section class="card" data-engagements-card data-board-section="engagements" aria-labelledby="engagements-title">
+            <div class="card__header">
+              <h2 id="engagements-title">Current engagements</h2>
+              <a href="senior.html">Open hub</a>
+            </div>
+            <div data-engagements></div>
+          </section>
+
+          <section class="card" data-board-section="tasks" aria-labelledby="tasks-title">
+            <div class="card__header">
+              <h2 id="tasks-title">Tasks</h2>
+              <a href="senior.html?section=tasks">All tasks</a>
+            </div>
+            <div data-tasks></div>
+          </section>
+
+          <section class="card" data-board-section="invitations" aria-labelledby="invitations-title">
+            <div class="card__header">
+              <h2 id="invitations-title">Invitations</h2>
+              <a href="care-circle.html">Care circle</a>
+            </div>
+            <div data-invitations></div>
+          </section>
+
+          <section class="card" data-board-section="visit-history" aria-labelledby="visit-history-title">
+            <div class="card__header">
+              <h2 id="visit-history-title">Visit history</h2>
+              <a href="senior.html?section=reports">Reports</a>
+            </div>
+            <div data-visit-history></div>
+          </section>
+
+          <section class="card" data-board-section="notifications" aria-labelledby="notifications-title">
+            <div class="card__header">
+              <h2 id="notifications-title">Notifications</h2>
+              <a href="notifications.html">Inbox</a>
+            </div>
+            <div data-notifications></div>
+          </section>
+
+          <section class="card" data-board-section="messages" aria-labelledby="messages-title">
+            <div class="card__header">
+              <h2 id="messages-title">Messages</h2>
+              <a href="messages.html">Inbox</a>
+            </div>
+            <div data-messages></div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script type="module" src="../js/pages/caregiver.js"></script>
+</body>
+</html>

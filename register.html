@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Sign up — Famielda</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/forms.css">
+  <link rel="stylesheet" href="css/pages/auth.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body class="auth-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header" data-public-header></header>
+  <main id="main">
+    <div class="auth-layout">
+      <aside class="auth-panel">
+        <img class="brand__logo" src="assets/images/logo.png" alt="Famielda" width="48" height="48" decoding="async" fetchpriority="high">
+        <div>
+          <p class="page-kicker" style="color:#d6c7f5">Sign up</p>
+          <h2>Know they're cared for, even when you can't be there.</h2>
+          <p>Create an account, add a senior profile, and invite the people already helping.</p>
+        </div>
+      </aside>
+      <div class="auth-card">
+        <header>
+          <p class="page-kicker">Sign up</p>
+          <h1>Create your Famielda account</h1>
+          <p>Create an account, choose your role, and open the workspace that matches how you care. The same email signs in on Famielda Mobile.</p>
+        </header>
+        <div id="register-referral" class="alert alert--info" data-referral-note hidden role="status"></div>
+        <div id="register-error" class="alert alert--error" hidden role="alert"></div>
+        <form id="register-form" class="form" novalidate>
+          <div class="form-row">
+            <div class="field">
+              <label for="firstName">First name</label>
+              <input id="firstName" name="firstName" type="text" autocomplete="given-name" autocapitalize="words" spellcheck="false" maxlength="40" required placeholder="Sarah">
+            </div>
+            <div class="field">
+              <label for="lastName">Last name</label>
+              <input id="lastName" name="lastName" type="text" autocomplete="family-name" autocapitalize="words" spellcheck="false" maxlength="40" required placeholder="Walsh">
+            </div>
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" spellcheck="false" required placeholder="you@example.com">
+          </div>
+          <div class="field" data-phone-field>
+            <label for="phone">Phone</label>
+            <div class="phone-input" dir="ltr">
+              <label class="visually-hidden" for="phoneCountry">Country code</label>
+              <select id="phoneCountry" name="phoneCountry" data-phone-country autocomplete="tel-country-code" aria-label="Country code">
+                <option value="US" selected>🇺🇸 +1 US</option>
+              </select>
+              <input id="phone" name="phone" type="tel" inputmode="numeric" autocomplete="tel-national" data-phone-national maxlength="10" required placeholder="2025550147" aria-describedby="phone-hint">
+            </div>
+            <p class="hint" id="phone-hint" data-phone-hint>🇺🇸 +1 · 10 digits for United States</p>
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label for="password">Password</label>
+              <div class="password-field">
+                <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters">
+                <button type="button" class="password-field__toggle" aria-label="Show password" aria-pressed="false"></button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="confirm">Confirm password</label>
+              <div class="password-field">
+                <input id="confirm" name="confirm" type="password" autocomplete="new-password" required placeholder="Re-enter your password">
+                <button type="button" class="password-field__toggle" aria-label="Show password" aria-pressed="false"></button>
+              </div>
+            </div>
+          </div>
+          <label class="checkbox checkbox--legal">
+            <input id="terms" name="terms" type="checkbox" required>
+            <span>I agree to the <a href="terms.html" target="_blank" rel="noopener noreferrer">Terms &amp; Conditions</a> and <a href="privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span>
+          </label>
+          <button class="btn btn--primary btn--block" type="submit">Sign up</button>
+        </form>
+        <p class="auth-switch">Already have an account? <a href="login.html">Sign in</a></p>
+        <p class="auth-switch">Questions first? <a href="help.html">Help Center</a></p>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer" data-public-footer></footer>
+  <script type="module" src="js/pages/register.js"></script>
+</body>
+</html>

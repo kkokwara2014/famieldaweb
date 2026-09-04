@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="description" content="Contact Famielda about family care coordination, professional accounts, pricing, or partnerships.">
+  <title>Contact — Famielda</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/images/logo.png">
+  <link rel="canonical" href="https://famielda.web.app/contact.html">
+  <link rel="sitemap" type="application/xml" title="Sitemap" href="https://famielda.web.app/sitemap.xml">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Famielda">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:title" content="Contact — Famielda">
+  <meta property="og:description" content="Contact Famielda about family care coordination, professional accounts, pricing, or partnerships.">
+  <meta property="og:url" content="https://famielda.web.app/contact.html">
+  <meta property="og:image" content="https://famielda.web.app/assets/images/og-cover.jpg">
+  <meta property="og:image:alt" content="Famielda — the family care platform">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Contact — Famielda">
+  <meta name="twitter:description" content="Contact Famielda about family care coordination, professional accounts, pricing, or partnerships.">
+  <meta name="twitter:image" content="https://famielda.web.app/assets/images/og-cover.jpg">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/forms.css">
+  <link rel="stylesheet" href="css/pages/landing.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body data-page="contact">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header" data-public-header></header>
+  <main id="main">
+    <section class="page-hero">
+      <div class="page-hero__inner">
+        <p class="page-kicker">Contact</p>
+        <h1>Write to the people who run Famielda.</h1>
+        <p class="hero__copy">Questions about the product, a household that needs a hand, professional verification, or a partnership — send them here. If you already have an account, you can also reach operations from Help inside the workspace.</p>
+      </div>
+    </section>
+
+    <div class="contact-grid">
+      <div class="contact-card">
+        <div id="contact-error" class="alert alert--error" hidden role="alert"></div>
+        <div id="contact-success" class="alert alert--success" hidden role="status"></div>
+        <form id="contact-form" class="form" novalidate>
+          <div class="hp-field" aria-hidden="true">
+            <label for="website">Website</label>
+            <input id="website" name="website" type="text" tabindex="-1" autocomplete="off">
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label for="name">Your name</label>
+              <input id="name" name="name" type="text" autocomplete="name" required maxlength="120" placeholder="Sarah Walsh">
+            </div>
+            <div class="field">
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label for="role">I am</label>
+              <select id="role" name="role">
+                <option value="family">Family</option>
+                <option value="caregiver">Caregiver</option>
+                <option value="practitioner">Health practitioner</option>
+                <option value="other">Something else</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="category">Topic</label>
+              <select id="category" name="category">
+                <option value="general">General question</option>
+                <option value="families">For families</option>
+                <option value="caregivers">For caregivers</option>
+                <option value="practitioners">For health practitioners</option>
+                <option value="billing">Pricing &amp; billing</option>
+                <option value="press">Press or partnership</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="subject">Subject</label>
+            <input id="subject" name="subject" type="text" required minlength="4" maxlength="140" placeholder="How can we help?">
+          </div>
+          <div class="field">
+            <label for="body">Message</label>
+            <textarea id="body" name="body" rows="6" required minlength="12" maxlength="4000" placeholder="Tell us what you need, and any household or account context that would help."></textarea>
+          </div>
+          <button class="btn btn--primary" type="submit">Send message</button>
+        </form>
+      </div>
+      <aside class="contact-aside">
+        <p class="page-kicker">Also useful</p>
+        <h2>Before you write</h2>
+        <ul class="check-list">
+          <li><a href="faq.html">FAQ</a> for plans, roles, and privacy</li>
+          <li><a href="privacy.html">Privacy Policy</a> and <a href="terms.html">Terms &amp; Conditions</a></li>
+          <li><a href="login.html?next=%2Fapp%2Fhelp.html">Signed-in Help Center</a> for account and Plus</li>
+          <li><a href="forgot-password.html">Forgot password</a> if you cannot get in</li>
+        </ul>
+        <p>This form is not for medical emergencies. If someone is in immediate danger, contact local emergency services.</p>
+      </aside>
+    </div>
+  </main>
+  <footer class="site-footer" data-public-footer></footer>
+  <script type="module" src="js/pages/contact.js"></script>
+</body>
+</html>

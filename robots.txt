@@ -1,0 +1,20 @@
+# Famielda — Module 35 / SEO
+User-agent: *
+Allow: /
+Allow: /resources.html
+Allow: /assets/
+Allow: /css/
+Allow: /js/
+
+Disallow: /app/
+Disallow: /admin/
+Disallow: /ui/
+Disallow: /login.html
+Disallow: /register.html
+Disallow: /forgot-password.html
+Disallow: /select-role.html
+Disallow: /auth-action.html
+Disallow: /verify-email.html
+Disallow: /onboarding.html
+
+Sitemap: https://famielda.web.app/sitemap.xml

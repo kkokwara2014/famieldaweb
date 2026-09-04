@@ -1,0 +1,696 @@
+rules_version = '2';
+
+// Famielda Security — Module 29.
+// Clients never enforce access. These rules, Storage rules, and Cloud Functions do.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function emailOf() {
+      return request.auth.token.email;
+    }
+
+    function hasUserDoc() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userRole() {
+      return userDoc().role;
+    }
+
+    function userStatus() {
+      return userDoc().status;
+    }
+
+    function isSuspended() {
+      return hasUserDoc() && 'status' in userDoc() && userStatus() == 'suspended';
+    }
+
+    function isActiveUser() {
+      return isSignedIn() && !isSuspended();
+    }
+
+    function isAdmin() {
+      return isActiveUser()
+        && hasUserDoc()
+        && userRole() == 'admin';
+    }
+
+    function isFamilyRole() {
+      return hasUserDoc() && userRole() == 'family';
+    }
+
+    function isPractitionerRole() {
+      return hasUserDoc() && userRole() == 'health_practitioner';
+    }
+
+    function isCaregiverRole() {
+      return hasUserDoc() && userRole() == 'caregiver';
+    }
+
+    function seniorPath(seniorId) {
+      return /databases/$(database)/documents/seniors/$(seniorId);
+    }
+
+    function seniorExists(seniorId) {
+      return exists(seniorPath(seniorId));
+    }
+
+    function seniorDoc(seniorId) {
+      return get(seniorPath(seniorId)).data;
+    }
+
+    function isSeniorMemberOf(seniorId) {
+      return isActiveUser()
+        && seniorExists(seniorId)
+        && (
+          seniorDoc(seniorId).ownerId == request.auth.uid
+          || request.auth.uid in seniorDoc(seniorId).memberIds
+        );
+    }
+
+    function isSeniorOwnerOf(seniorId) {
+      return isActiveUser()
+        && seniorExists(seniorId)
+        && seniorDoc(seniorId).ownerId == request.auth.uid;
+    }
+
+    function canEditSeniorRecord(seniorId) {
+      return isSeniorOwnerOf(seniorId)
+        || isAdmin()
+        || (isSeniorMemberOf(seniorId) && (isFamilyRole() || isPractitionerRole()));
+    }
+
+    function canViewClinical(seniorId) {
+      return isSeniorOwnerOf(seniorId)
+        || isAdmin()
+        || (isSeniorMemberOf(seniorId) && (
+          isFamilyRole() || isPractitionerRole() || isCaregiverRole()
+        ));
+    }
+
+    function clientPlanIsFree() {
+      return !('plan' in request.resource.data)
+        || request.resource.data.plan == 'free';
+    }
+
+    function clientRoleAllowed() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+        || request.resource.data.role == null
+        || request.resource.data.role in ['family', 'caregiver', 'health_practitioner']
+        || (resource.data.role == 'admin' && request.resource.data.role == 'admin');
+    }
+
+    function lockedAccountKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'plan',
+        'stripeCustomerId',
+        'stripeSubscriptionId',
+        'stripePriceId',
+        'subscriptionStatus',
+        'subscriptionPeriodEnd',
+        'subscriptionCancelAtPeriodEnd',
+        'status',
+        'suspendedAt',
+        'suspendedBy',
+        'suspendedReason',
+        'adminGrant',
+        'verificationStatus',
+        'verifiedAt',
+        'referralCode',
+        'referredBy',
+        'referredByCode',
+        'referralGrant'
+      ]);
+    }
+
+    function stringField(data, key, max) {
+      return !(key in data) || (data[key] is string && data[key].size() <= max);
+    }
+
+    // Shared by Famielda Mobile and Famielda Web. Document ID is the Firebase Auth UID.
+    // plan, Stripe, status, verification, and adminGrant fields are written only by Cloud Functions.
+    match /users/{userId} {
+      allow read: if isSelf(userId);
+      allow create: if isSelf(userId) && clientPlanIsFree()
+        && (!('role' in request.resource.data)
+          || request.resource.data.role == null
+          || request.resource.data.role in ['family', 'caregiver', 'health_practitioner'])
+        && !request.resource.data.keys().hasAny([
+          'stripeCustomerId',
+          'stripeSubscriptionId',
+          'stripePriceId',
+          'subscriptionStatus',
+          'subscriptionPeriodEnd',
+          'subscriptionCancelAtPeriodEnd',
+          'adminGrant',
+          'suspendedAt',
+          'suspendedBy',
+          'suspendedReason',
+          'verificationStatus',
+          'verifiedAt',
+          'referralCode',
+          'referredBy',
+          'referredByCode',
+          'referralGrant'
+        ])
+        && (!('status' in request.resource.data) || request.resource.data.status == 'active');
+      allow update: if isSelf(userId)
+        && !isSuspended()
+        && !lockedAccountKeys()
+        && clientRoleAllowed();
+      allow delete: if isSelf(userId);
+    }
+
+    match /users/{userId}/fcmTokens/{tokenId} {
+      allow read, write: if isSelf(userId) && isActiveUser();
+    }
+
+    match /subscriptions/{userId} {
+      allow read: if isSelf(userId);
+      allow write: if false;
+    }
+
+    match /stripeCustomers/{customerId} {
+      allow read, write: if false;
+    }
+
+    match /stripeEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /adminAuditLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /analyticsEvents/{eventId} {
+      allow create: if isActiveUser()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.name in [
+          'registration',
+          'role_selected',
+          'senior_created',
+          'family_invited',
+          'caregiver_invited',
+          'practitioner_invited',
+          'invitation_accepted',
+          'schedule_created',
+          'visit_completed',
+          'task_completed',
+          'plus_upgrade',
+          'subscription_cancelled',
+          'android_app_download_click',
+          'ios_app_download_click'
+        ]
+        && request.resource.data.keys().hasOnly([
+          'name',
+          'userId',
+          'role',
+          'plan',
+          'platform',
+          'source',
+          'inviteKind',
+          'professionalKind',
+          'professionalType',
+          'outcome',
+          'planFrom',
+          'planTo',
+          'status',
+          'cancelAtPeriodEnd',
+          'interval',
+          'seniorId',
+          'visitId',
+          'taskId',
+          'inviteId',
+          'completionId',
+          'subscriptionId',
+          'dedupeKey',
+          'createdAt'
+        ])
+        && !request.resource.data.keys().hasAny([
+          'email',
+          'displayName',
+          'preferredName',
+          'body',
+          'notes',
+          'note',
+          'title',
+          'message',
+          'phone',
+          'address',
+          'diagnosis',
+          'medication',
+          'mood',
+          'symptoms',
+          'seniorName',
+          'caregiverName',
+          'familyName'
+        ])
+        && request.resource.data.source == 'client'
+        && stringField(request.resource.data, 'name', 64)
+        && stringField(request.resource.data, 'userId', 128)
+        && stringField(request.resource.data, 'role', 40)
+        && stringField(request.resource.data, 'plan', 20);
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /monitoringEvents/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /rateLimits/{limitId} {
+      allow read, write: if false;
+    }
+
+    match /scheduleEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /professionalVerifications/{userId} {
+      allow read: if isSelf(userId) || isAdmin();
+      allow write: if false;
+    }
+
+    match /professionalVerificationDocuments/{documentId} {
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow write: if false;
+    }
+
+    match /familyReferralCodes/{userId} {
+      allow read: if isSelf(userId) || isAdmin();
+      allow write: if false;
+    }
+
+    match /familyReferralCodeIndex/{code} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    match /familyReferrals/{referralId} {
+      allow read: if isActiveUser() && (
+        resource.data.referrerId == request.auth.uid ||
+        resource.data.inviteeUserId == request.auth.uid ||
+        resource.data.email == emailOf() ||
+        isAdmin()
+      );
+      allow write: if false;
+    }
+
+    match /supportTickets/{ticketId} {
+      allow create: if isActiveUser()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.subject is string
+        && request.resource.data.subject.size() > 0
+        && request.resource.data.subject.size() <= 200
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 8000;
+      allow read: if isActiveUser() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    function isListedSeniorMember() {
+      return isActiveUser() && (
+        resource.data.ownerId == request.auth.uid
+        || (resource.data.keys().hasAll(['memberIds']) && request.auth.uid in resource.data.memberIds)
+      );
+    }
+
+    match /seniors/{seniorId} {
+      allow read: if isListedSeniorMember() || isAdmin();
+      allow create: if isActiveUser()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.auth.uid in request.resource.data.memberIds
+        && request.resource.data.memberIds.hasOnly([request.auth.uid])
+        && stringField(request.resource.data, 'displayName', 120);
+      allow update: if canEditSeniorRecord(seniorId)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && (
+          request.resource.data.memberIds == resource.data.memberIds
+          || isSeniorOwnerOf(seniorId)
+        );
+      allow delete: if isSeniorOwnerOf(seniorId);
+    }
+
+    match /careCircleMembers/{memberId} {
+      allow read: if isActiveUser() && (
+        resource.data.userId == request.auth.uid
+        || resource.data.email == emailOf()
+        || isSeniorMemberOf(resource.data.seniorId)
+        || isAdmin()
+      );
+      allow create: if isActiveUser()
+        && request.resource.data.seniorId is string
+        && isSeniorOwnerOf(request.resource.data.seniorId)
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.role == 'owner'
+        && request.resource.data.status == 'active';
+      allow update: if isActiveUser()
+        && resource.data.seniorId == request.resource.data.seniorId
+        && (
+          resource.data.userId == request.auth.uid
+          || resource.data.email == emailOf()
+        )
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['availability', 'lastSeenAt', 'nextVisit', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /careCircleInvites/{inviteId} {
+      allow read: if isActiveUser() && (
+        resource.data.invitedBy == request.auth.uid
+        || resource.data.email == emailOf()
+        || isSeniorMemberOf(resource.data.seniorId)
+        || isAdmin()
+      );
+      allow create, update, delete: if false;
+    }
+
+    // Occupancy, overlap, and availability are owned by Cloud Functions.
+    match /caregiverAvailability/{windowId} {
+      allow read: if isActiveUser() && (
+        resource.data.caregiverUserId == request.auth.uid
+        || resource.data.caregiverEmail == emailOf()
+        || isAdmin()
+        || isFamilyRole()
+        || isPractitionerRole()
+      );
+      allow write: if false;
+    }
+
+    match /scheduleVisits/{visitId} {
+      allow read: if isActiveUser() && (
+        resource.data.caregiverUserId == request.auth.uid
+        || resource.data.caregiverEmail == emailOf()
+        || resource.data.requestedBy == request.auth.uid
+        || isSeniorMemberOf(resource.data.seniorId)
+        || isAdmin()
+      );
+      allow create, update, delete: if false;
+    }
+
+    match /caregiverScheduleLocks/{lockId} {
+      allow read: if isActiveUser() && (
+        resource.data.caregiverUserId == request.auth.uid
+        || resource.data.caregiverEmail == emailOf()
+        || isAdmin()
+        || isFamilyRole()
+        || isPractitionerRole()
+      );
+      allow write: if false;
+    }
+
+    match /carePlans/{planId} {
+      allow read: if isActiveUser() && (
+        isSeniorMemberOf(resource.data.seniorId) || isAdmin()
+      );
+      allow create: if isActiveUser()
+        && isSeniorMemberOf(request.resource.data.seniorId)
+        && (isSeniorOwnerOf(request.resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin())
+        && request.resource.data.seniorId is string
+        && stringField(request.resource.data, 'title', 160);
+      allow update: if isActiveUser()
+        && isSeniorMemberOf(resource.data.seniorId)
+        && request.resource.data.seniorId == resource.data.seniorId
+        && (isSeniorOwnerOf(resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin());
+      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+
+    match /carePlanTasks/{taskId} {
+      allow read: if isActiveUser() && (
+        resource.data.assignedCaregiverUserId == request.auth.uid
+        || resource.data.assignedCaregiverEmail == emailOf()
+        || isSeniorMemberOf(resource.data.seniorId)
+        || isAdmin()
+      );
+      allow create: if isActiveUser()
+        && isSeniorMemberOf(request.resource.data.seniorId)
+        && request.resource.data.seniorId is string
+        && (isSeniorOwnerOf(request.resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin());
+      allow update: if isActiveUser()
+        && request.resource.data.seniorId == resource.data.seniorId
+        && (
+          isSeniorOwnerOf(resource.data.seniorId)
+          || isFamilyRole()
+          || isPractitionerRole()
+          || isAdmin()
+          || resource.data.assignedCaregiverUserId == request.auth.uid
+          || resource.data.assignedCaregiverEmail == emailOf()
+        );
+      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+
+    match /carePlanCompletions/{completionId} {
+      allow read: if isActiveUser() && (
+        isSeniorMemberOf(resource.data.seniorId) || isAdmin()
+      );
+      allow create: if isActiveUser() && (
+        isSeniorMemberOf(request.resource.data.seniorId)
+        || request.resource.data.completedBy == request.auth.uid
+      );
+      allow update, delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if isActiveUser() && (
+        resource.data.practitionerUserId == request.auth.uid
+        || resource.data.practitionerEmail == emailOf()
+        || isSeniorMemberOf(resource.data.seniorId)
+        || isAdmin()
+      );
+      allow create: if isActiveUser()
+        && isSeniorMemberOf(request.resource.data.seniorId)
+        && request.resource.data.seniorId is string
+        && (isSeniorOwnerOf(request.resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin());
+      allow update: if isActiveUser()
+        && request.resource.data.seniorId == resource.data.seniorId
+        && (
+          isSeniorMemberOf(resource.data.seniorId)
+          || resource.data.practitionerUserId == request.auth.uid
+          || resource.data.practitionerEmail == emailOf()
+        );
+      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+
+    match /medications/{medicationId} {
+      allow read: if isActiveUser() && canViewClinical(resource.data.seniorId)
+        && (
+          resource.data.responsibleUserId == request.auth.uid
+          || resource.data.responsibleEmail == emailOf()
+          || isSeniorMemberOf(resource.data.seniorId)
+          || isAdmin()
+        );
+      allow create: if isActiveUser()
+        && canViewClinical(request.resource.data.seniorId)
+        && isSeniorMemberOf(request.resource.data.seniorId)
+        && request.resource.data.seniorId is string
+        && (isSeniorOwnerOf(request.resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin());
+      allow update: if isActiveUser()
+        && request.resource.data.seniorId == resource.data.seniorId
+        && (
+          isSeniorMemberOf(resource.data.seniorId)
+          || resource.data.responsibleUserId == request.auth.uid
+          || resource.data.responsibleEmail == emailOf()
+        );
+      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+
+    match /medicationDoses/{doseId} {
+      allow read: if isActiveUser() && (
+        resource.data.recordedBy == request.auth.uid
+        || isSeniorMemberOf(resource.data.seniorId)
+        || isAdmin()
+      );
+      allow create: if isActiveUser() && (
+        isSeniorMemberOf(request.resource.data.seniorId)
+        || request.resource.data.recordedBy == request.auth.uid
+      );
+      allow update: if isActiveUser() && (
+        isSeniorOwnerOf(resource.data.seniorId)
+        || isAdmin()
+        || resource.data.recordedBy == request.auth.uid
+      );
+      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+
+    match /activities/{activityId} {
+      allow read: if isActiveUser() && (
+        resource.data.actorId == request.auth.uid
+        || isSeniorMemberOf(resource.data.seniorId)
+        || isAdmin()
+      );
+      allow create: if isActiveUser() && (
+        isSeniorMemberOf(request.resource.data.seniorId)
+        || request.resource.data.actorId == request.auth.uid
+      )
+        && request.resource.data.actorId == request.auth.uid
+        && stringField(request.resource.data, 'title', 200)
+        && stringField(request.resource.data, 'body', 2000);
+      allow update, delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isActiveUser() && (
+        resource.data.userId == request.auth.uid
+        || resource.data.email == emailOf()
+        || (resource.data.seniorId is string && isSeniorMemberOf(resource.data.seniorId))
+        || isAdmin()
+      );
+      allow create: if isActiveUser()
+        && stringField(request.resource.data, 'title', 200)
+        && stringField(request.resource.data, 'body', 2000)
+        && (
+          request.resource.data.userId == request.auth.uid
+          || (
+            request.resource.data.seniorId is string
+            && isSeniorMemberOf(request.resource.data.seniorId)
+            && (
+              !('userId' in request.resource.data)
+              || request.resource.data.userId == ''
+              || request.resource.data.userId in seniorDoc(request.resource.data.seniorId).memberIds
+            )
+          )
+        );
+      allow update: if isActiveUser() && (
+        resource.data.userId == request.auth.uid
+        || resource.data.email == emailOf()
+      )
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['read', 'readAt', 'seenAt', 'updatedAt']);
+      allow delete: if isActiveUser() && (
+        resource.data.userId == request.auth.uid
+        || isSeniorOwnerOf(resource.data.seniorId)
+        || isAdmin()
+      );
+    }
+
+    function canViewCareDocument() {
+      return isSeniorMemberOf(resource.data.seniorId) && (
+        isSeniorOwnerOf(resource.data.seniorId)
+        || isAdmin()
+        || resource.data.visibility == 'circle'
+        || (resource.data.visibility == 'family' && (isFamilyRole() || isAdmin()))
+        || (resource.data.visibility == 'clinical' && (
+          isFamilyRole() || isPractitionerRole() || isAdmin()
+        ))
+      );
+    }
+
+    match /documents/{documentId} {
+      allow read: if isActiveUser() && canViewCareDocument();
+      allow create: if isActiveUser()
+        && isSeniorMemberOf(request.resource.data.seniorId)
+        && request.resource.data.seniorId is string
+        && request.resource.data.uploadedBy == request.auth.uid
+        && request.resource.data.visibility in ['circle', 'family', 'clinical']
+        && stringField(request.resource.data, 'title', 160);
+      allow update: if isActiveUser()
+        && isSeniorMemberOf(resource.data.seniorId)
+        && request.resource.data.seniorId == resource.data.seniorId
+        && request.resource.data.uploadedBy == resource.data.uploadedBy
+        && (
+          isSeniorOwnerOf(resource.data.seniorId)
+          || isFamilyRole()
+          || isAdmin()
+          || resource.data.uploadedBy == request.auth.uid
+        );
+      allow delete: if isActiveUser() && (
+        isSeniorOwnerOf(resource.data.seniorId)
+        || isAdmin()
+        || (isSeniorMemberOf(resource.data.seniorId) && (
+          resource.data.uploadedBy == request.auth.uid
+          || isFamilyRole()
+        ))
+      );
+    }
+
+    function conversationParticipantsOnSenior(data) {
+      return data.participantIds is list
+        && data.participantIds.size() == 2
+        && data.participantIds.hasOnly(seniorDoc(data.seniorId).memberIds);
+    }
+
+    function canReadConversation() {
+      return isActiveUser() && (
+        (resource.data.keys().hasAny(['participantIds']) && request.auth.uid in resource.data.participantIds)
+        || (resource.data.keys().hasAny(['participantKeys']) && request.auth.uid in resource.data.participantKeys)
+        || (resource.data.type == 'circle' && isSeniorMemberOf(resource.data.seniorId))
+        || isAdmin()
+      );
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if canReadConversation();
+      allow create: if isActiveUser()
+        && isSeniorMemberOf(request.resource.data.seniorId)
+        && request.auth.uid in request.resource.data.participantKeys
+        && (
+          request.resource.data.type == 'circle'
+          || conversationParticipantsOnSenior(request.resource.data)
+        );
+      allow update: if isActiveUser()
+        && canReadConversation()
+        && request.resource.data.seniorId == resource.data.seniorId
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'lastMessage',
+            'lastMessageAt',
+            'lastMessageBody',
+            'lastAuthorId',
+            'lastAuthorKey',
+            'lastAuthorName',
+            'updatedAt',
+            'readAtBy',
+            'unreadCount',
+            'title'
+          ]);
+      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+
+    match /messages/{messageId} {
+      allow read: if isActiveUser() && (
+        (resource.data.keys().hasAny(['participantIds']) && request.auth.uid in resource.data.participantIds)
+        || (resource.data.keys().hasAny(['participantKeys']) && request.auth.uid in resource.data.participantKeys)
+        || (resource.data.type == 'circle' && isSeniorMemberOf(resource.data.seniorId))
+        || isAdmin()
+      );
+      allow create: if isActiveUser()
+        && request.resource.data.authorId == request.auth.uid
+        && isSeniorMemberOf(request.resource.data.seniorId)
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 4000
+        && (
+          request.resource.data.type == 'circle'
+          || request.auth.uid in request.resource.data.participantIds
+        );
+      allow update: if false;
+      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
+    }
+  }
+}

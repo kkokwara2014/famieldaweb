@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#5E35B1">
+  <meta name="robots" content="noindex">
+  <title>Sign in — Famielda</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/forms.css">
+  <link rel="stylesheet" href="css/pages/auth.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body class="auth-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header" data-public-header></header>
+  <main id="main">
+    <div class="auth-layout">
+      <aside class="auth-panel">
+        <img class="brand__logo" src="assets/images/logo.png" alt="Famielda" width="48" height="48" decoding="async" fetchpriority="high">
+        <div>
+          <p class="page-kicker" style="color:#d6c7f5">Workspace access</p>
+          <h2>Know they're cared for, even when you can't be there.</h2>
+          <p>Sign in to the circle, the week, and the record the family shares.</p>
+        </div>
+      </aside>
+      <div class="auth-card">
+        <header>
+          <p class="page-kicker">Welcome back</p>
+          <h1>Sign in to Famielda</h1>
+          <p>Use your Famielda account to open the workspace that matches your role.</p>
+        </header>
+        <div id="login-error" class="alert alert--error" hidden role="alert"></div>
+        <form id="login-form" class="form" novalidate>
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+          </div>
+          <div class="field">
+            <div class="field__label-row">
+              <label for="password">Password</label>
+              <a class="field__aux-link" href="forgot-password.html">Forgot password?</a>
+            </div>
+            <div class="password-field">
+              <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="Enter your password">
+              <button type="button" class="password-field__toggle" aria-label="Show password" aria-pressed="false"></button>
+            </div>
+          </div>
+          <label class="checkbox">
+            <input id="remember" name="remember" type="checkbox" checked>
+            Keep me signed in on this device
+          </label>
+          <button class="btn btn--primary btn--block" type="submit">Sign in</button>
+        </form>
+        <p class="auth-switch">New here? <a href="register.html">Create an account</a></p>
+        <p class="auth-switch">Need help signing in? <a href="help.html">Visit the Help Center</a></p>
+        <div class="demo-note">
+          Preview accounts<br>
+          family@famielda.test · any password<br>
+          caregiver@famielda.test · any password<br>
+          practitioner@famielda.test · any password<br>
+          kemi@famielda.test · pending invite · any password<br>
+          admin@famielda.test · any password
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer" data-public-footer></footer>
+  <script type="module" src="js/pages/login.js"></script>
+</body>
+</html>
