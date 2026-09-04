@@ -3,6 +3,7 @@ import { initSession } from "../auth/session.js";
 import { qs, escapeHtml } from "../core/dom.js";
 import { go, homeFor, routes } from "../config/routes.js";
 import {
+  clearStoredInviteToken,
   inviteKindPhrase,
   inviteLoginPath,
   inviteRegisterPath,
@@ -26,8 +27,10 @@ if (!token) {
   try {
     const preview = await resolveCareCircleInvite(token);
     if (!preview) {
+      clearStoredInviteToken();
       renderMissing();
     } else if (preview.status && preview.status !== INVITE_STATUS.PENDING) {
+      clearStoredInviteToken();
       renderClosed(preview);
     } else if (session && preview.matchesViewer) {
       go(homeFor(session));

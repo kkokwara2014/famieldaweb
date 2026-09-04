@@ -511,30 +511,30 @@ const mockApi = {
   },
   async submitPublicContact(data = {}) {
     if (String(data.website || "").trim()) return { ok: true };
-    const name = String(data.name || "").trim();
+    const name = String(data.name || "").trim().replace(/\s+/g, " ");
     const email = String(data.email || "").trim().toLowerCase();
+    const phone = String(data.phone || "").trim();
     const subject = String(data.subject || "").trim();
     const body = String(data.body || "").trim();
     if (!name) throw new Error("Your name is required.");
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter a valid email so we can reply.");
+    if (name.length > 120) throw new Error("Use a shorter name.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+      throw new Error("Enter a valid email so we can reply.");
+    }
+    if (phone && !/^[+()\d.\s-]{7,40}$/.test(phone)) {
+      throw new Error("Enter a valid phone number, or leave it blank.");
+    }
     if (subject.length < 4) throw new Error("Give the message a short subject.");
     if (body.length < 12) throw new Error("Add a bit more detail so we can help.");
-    const tickets = loadTickets();
+    const attempts = Array.isArray(storage.get("famielda.contact.attempts"))
+      ? storage.get("famielda.contact.attempts")
+      : [];
     const cutoff = Date.now() - 60 * 60 * 1000;
-    const recent = tickets.filter((item) => item.source === "website" && Date.parse(item.createdAt || 0) >= cutoff);
+    const recent = attempts.filter((ts) => Number(ts) >= cutoff);
     if (recent.length >= 5) throw new Error("Too many messages. Try again later.");
-    return mockApi.adminCreateSupportTicket({
-      userName: name,
-      email,
-      subject,
-      body,
-      category: data.category || "general",
-      kind: "contact",
-      source: "website",
-      audience: data.role || "",
-      pageUrl: data.pageUrl || "",
-      userAgent: data.userAgent || "",
-    });
+    recent.push(Date.now());
+    storage.set("famielda.contact.attempts", recent);
+    return { ok: true };
   },
 };
 
@@ -576,4 +576,9 @@ export const createAdminSupportTicket = (data) => invoke("adminCreateSupportTick
 export const updateAdminSupportTicket = (data) => invoke("adminUpdateSupportTicket", data);
 export const listAdminAuditLogs = (data) => invoke("adminListAuditLogs", data);
 export const createSupportTicketRequest = (data) => invoke("createSupportTicket", data);
-export const submitPublicContactRequest = (data) => invoke("submitPublicContact", data);
+export const submitPublicContactRequest = (data) => {
+  if (!usesLiveAuth()) return mockApi.submitPublicContact(data);
+  return callCloudFunction("submitPublicContact", data, {
+    fallback: "We couldn't send your message right now. Please try again or contact Famielda directly at support@famielda.org.",
+  });
+};

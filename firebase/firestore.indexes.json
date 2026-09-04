@@ -9,6 +9,22 @@
       ]
     },
     {
+      "collectionGroup": "careCircleMembers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "seniorId", "order": "ASCENDING" },
+        { "fieldPath": "userId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "careCircleMembers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "seniorId", "order": "ASCENDING" },
+        { "fieldPath": "email", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "careCircleInvites",
       "queryScope": "COLLECTION",
       "fields": [

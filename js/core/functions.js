@@ -8,6 +8,7 @@ export function functionsMessage(error, fallback = "That request could not be co
   if (code.endsWith("permission-denied")) return error.message || "You cannot complete this request.";
   if (code.endsWith("resource-exhausted")) return error.message || "Too many attempts. Please wait and try again.";
   if (code.endsWith("invalid-argument")) return error.message || "That request was invalid.";
+  if (code.endsWith("unavailable")) return error.message || fallback;
   const cleaned = String(error?.message || "").replace(/^Firebase:\s*/i, "").replace(/\s*\([^)]+\)\s*$/, "").trim();
   if (!cleaned || /^internal$/i.test(cleaned) || code.endsWith("internal")) return fallback;
   return cleaned;

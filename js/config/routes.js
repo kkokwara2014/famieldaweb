@@ -1,6 +1,6 @@
 import { getBasePath } from "../core/paths.js";
 import { ROLES } from "./constants.js";
-import { inviteContinuePath } from "./invites.js";
+import { inviteContinuePath, persistInviteToken } from "./invites.js";
 import { hasCompletedOnboarding } from "./onboarding.js";
 import { hasCompletedRoleSetup } from "./roles.js";
 
@@ -92,6 +92,8 @@ export function safeNextPath(fallback) {
 }
 
 export function goToLogin(nextPath = `${window.location.pathname}${window.location.search}`) {
+  const inviteFromUrl = new URLSearchParams(window.location.search).get("invite") || "";
+  if (inviteFromUrl) persistInviteToken(inviteFromUrl);
   const skip = [routes.login, routes.register, routes.forgotPassword, routes.verifyEmail, routes.authAction, routes.selectRole, routes.onboarding];
   const includeNext = nextPath && !skip.some((path) => nextPath.startsWith(path));
   const suffix = includeNext ? `?next=${encodeURIComponent(nextPath)}` : "";

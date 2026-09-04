@@ -262,7 +262,11 @@ async function saveInvite(invite) {
 }
 
 async function liveCircle(name, data) {
-  return callCloudFunction(name, data);
+  return callCloudFunction(name, data, {
+    fallback: name === "inviteCareCircleMember"
+      ? "The invitation could not be sent. Try again."
+      : "That request could not be completed.",
+  });
 }
 
 function visibleMembers(members) {
@@ -459,6 +463,7 @@ export async function resolveCareCircleInvite(token) {
   const invite = await getInviteByToken(normalized);
   if (!invite) return null;
   const session = getSession();
+  const existingUser = findLocalUserByContact({ email: invite.email, phone: invite.phone });
   const preview = {
     token: invite.token || invite.id,
     status: invite.status,
@@ -469,12 +474,12 @@ export async function resolveCareCircleInvite(token) {
     relationship: invite.relationship,
     message: invite.message,
     channel: invite.channel || (invite.phone && !invite.email ? "phone" : "email"),
-    accountState: invite.accountState || (invite.inviteeUserId ? "existing" : "new"),
-    email: invite.email || "",
-    phone: invite.phone || "",
-    loginEmail: invite.email || "",
+    accountState: invite.accountState || (invite.inviteeUserId || existingUser ? "existing" : "new"),
+    email: invite.email || existingUser?.email || "",
+    phone: invite.phone || existingUser?.phone || "",
+    loginEmail: invite.email || existingUser?.email || "",
     signedIn: Boolean(session?.id),
-    matchesViewer: inviteMatchesSession(invite, session),
+    matchesViewer: inviteMatchesSession(invite, session) || Boolean(existingUser && session?.id === existingUser.id),
   };
   persistInvitePreview(preview);
   return preview;

@@ -180,25 +180,34 @@ function assertRole(user, roles) {
   }
 }
 
-async function loadMembership(seniorId, uid, email) {
-  const members = db().collection(MEMBERS);
-  const byUser = uid
-    ? await members.where("seniorId", "==", seniorId).where("userId", "==", uid).limit(4).get()
-    : { empty: true, docs: [] };
-  let doc = byUser.docs.find((item) => {
+function pickMembershipDoc(docs, seniorId) {
+  const forSenior = (docs || []).filter((item) => item.data()?.seniorId === seniorId);
+  return forSenior.find((item) => {
     const status = item.data()?.status;
     return status === "active" || status === "invited";
-  }) || byUser.docs[0];
+  }) || forSenior[0] || null;
+}
 
-  if (!doc && email) {
-    const byEmail = await members.where("seniorId", "==", seniorId).where("email", "==", emailOf(email)).limit(4).get();
-    doc = byEmail.docs.find((item) => {
-      const status = item.data()?.status;
-      return status === "active" || status === "invited";
-    }) || byEmail.docs[0];
+function isActiveCircleMember(member) {
+  return Boolean(member && member.status === "active");
+}
+
+async function loadMembership(seniorId, uid, email) {
+  const members = db().collection(MEMBERS);
+
+  if (uid) {
+    const byUser = await members.where("userId", "==", uid).limit(20).get();
+    const doc = pickMembershipDoc(byUser.docs, seniorId);
+    if (doc) return { id: doc.id, ...doc.data() };
   }
 
-  return doc ? { id: doc.id, ...doc.data() } : null;
+  if (email) {
+    const byEmail = await members.where("email", "==", emailOf(email)).limit(20).get();
+    const doc = pickMembershipDoc(byEmail.docs, seniorId);
+    if (doc) return { id: doc.id, ...doc.data() };
+  }
+
+  return null;
 }
 
 function circlePermissionsFor(member, senior, uid) {
@@ -222,14 +231,13 @@ function hasCirclePermission(member, senior, uid, permission) {
 async function requireHousehold(request, seniorId, permission = "") {
   const { uid, user } = await requireActiveUser(request);
   const senior = await loadSenior(seniorId);
+  const member = await loadMembership(senior.id, uid, user.email);
   if (isAdminUser(user)) {
-    const member = await loadMembership(senior.id, uid, user.email);
     return { uid, user, senior, member, admin: true };
   }
-  if (!isSeniorMember(senior, uid)) {
+  if (!isSeniorMember(senior, uid) && !isActiveCircleMember(member)) {
     throw new HttpsError("permission-denied", "You are not on this household.");
   }
-  const member = await loadMembership(senior.id, uid, user.email);
   if (permission && !hasCirclePermission(member, senior, uid, permission)) {
     throw new HttpsError("permission-denied", "You do not have permission to do that in this household.");
   }

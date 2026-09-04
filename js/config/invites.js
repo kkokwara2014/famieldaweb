@@ -33,6 +33,7 @@ export function normalizeInviteToken(value) {
 
 export function persistInviteToken(token) {
   const normalized = normalizeInviteToken(token);
+  if (!normalized) return "";
   writeSession(CARE_CIRCLE_INVITE_STORAGE_KEY, normalized);
   return normalized;
 }

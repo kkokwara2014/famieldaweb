@@ -659,6 +659,45 @@
   padding: 1.6rem;
 }
 
+.contact-aside__subhead {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.contact-aside .contact-details + .page-kicker {
+  margin-top: 0.35rem;
+}
+
+.contact-details {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0 1.6rem;
+}
+
+.contact-details div {
+  margin: 0;
+}
+
+.contact-details dt {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.contact-details dd {
+  margin: 0.2rem 0 0;
+}
+
+.contact-details a {
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.contact-details a:hover,
+.contact-details a:focus-visible {
+  text-decoration: underline;
+}
+
 .hp-field {
   position: absolute;
   left: -9999px;

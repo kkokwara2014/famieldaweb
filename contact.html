@@ -62,8 +62,15 @@
             </div>
             <div class="field">
               <label for="email">Email</label>
-              <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+              <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com">
             </div>
+          </div>
+          <div class="field">
+            <div class="field__label-row">
+              <label for="phone">Phone</label>
+              <span class="hint">Optional</span>
+            </div>
+            <input id="phone" name="phone" type="tel" autocomplete="tel" maxlength="40" placeholder="(240) 555-0123">
           </div>
           <div class="form-row">
             <div class="field">
@@ -99,8 +106,20 @@
         </form>
       </div>
       <aside class="contact-aside">
+        <p class="page-kicker">Reach us</p>
+        <h2>Famielda support</h2>
+        <dl class="contact-details">
+          <div>
+            <dt>Phone</dt>
+            <dd><a href="tel:+12404137531">240-413-7531</a></dd>
+          </div>
+          <div>
+            <dt>Email</dt>
+            <dd><a href="mailto:support@famielda.org">support@famielda.org</a></dd>
+          </div>
+        </dl>
         <p class="page-kicker">Also useful</p>
-        <h2>Before you write</h2>
+        <h3 class="contact-aside__subhead">Before you write</h3>
         <ul class="check-list">
           <li><a href="faq.html">FAQ</a> for plans, roles, and privacy</li>
           <li><a href="privacy.html">Privacy Policy</a> and <a href="terms.html">Terms &amp; Conditions</a></li>

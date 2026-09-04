@@ -9,13 +9,11 @@ import {
   CIRCLE_PERMISSION_OPTIONS,
   CIRCLE_ROLE_OPTIONS,
   CirclePlanError,
-  defaultProfessionalType,
   defaultRelationship,
   kindLabel,
   kindOption,
   permissionSummary,
   permissionsForRole,
-  professionalRoleForKind,
   relationshipsFor,
   roleLabel,
   statusBadge,
@@ -26,15 +24,18 @@ import {
   entitlementMessage,
   isPlusPlan,
 } from "../services/entitlement-service.js";
-import { professionalTypeLabel, professionalTypesFor } from "../config/roles.js";
+import { professionalTypeLabel } from "../config/roles.js";
 import { avatarHtml } from "../components/avatar.js";
 import { emptyState } from "../components/empty-state.js";
 import { bindPhoneField, readPhoneField } from "../components/phone-field.js";
 import {
   careCircleInviteUrl,
+  clearStoredInviteToken,
   inviteEmailSubject,
   inviteShareText,
   mailtoInviteHref,
+  persistInviteToken,
+  readStoredInviteToken,
   smsInviteHref,
 } from "../config/invites.js";
 import { toast } from "../components/toast.js";
@@ -55,6 +56,9 @@ import {
 } from "../services/care-circle-service.js";
 import { verificationChipHtml } from "../components/verification-banner.js";
 
+const inviteFromUrl = new URLSearchParams(window.location.search).get("invite") || "";
+if (inviteFromUrl) persistInviteToken(inviteFromUrl);
+
 const session = await bootApp({ page: "care-circle" });
 const root = qs("[data-circle-page]");
 const inviteForm = qs("[data-invite-form]");
@@ -62,11 +66,12 @@ const inviteCompose = qs("[data-invite-compose]");
 const inviteSent = qs("[data-invite-sent]");
 const invitePhoneField = qs("[data-invite-phone-field]");
 const permissionsForm = qs("[data-permissions-form]");
-const inviteToken = new URLSearchParams(window.location.search).get("invite") || "";
+const inviteToken = inviteFromUrl;
 
 let state = await getCareCircleState(session, { inviteToken });
 let filter = "all";
 let latestInviteShare = null;
+syncStoredInvite();
 
 bindModal("invite");
 bindModal("permissions");
@@ -227,7 +232,15 @@ async function runAction(button, action, success) {
 
 async function reload() {
   state = await getCareCircleState(getSession() ?? session, { inviteToken });
+  syncStoredInvite();
   render();
+}
+
+function syncStoredInvite() {
+  const stored = readStoredInviteToken();
+  if (!stored) return;
+  const waiting = state.incoming.some((item) => item.token === stored || item.id === stored);
+  if (!waiting) clearStoredInviteToken();
 }
 
 function handleError(error) {
@@ -255,7 +268,6 @@ function openInvite(kind) {
 
 function resetInviteModal(kind) {
   const option = kindOption(kind);
-  const types = professionalTypesFor(professionalRoleForKind(kind));
   qs("#invite-title").textContent = `Invite ${option.label.toLowerCase()}`;
   qs("[data-invite-lead]").textContent = `${option.description} They accept before they can see the household record.`;
   inviteForm.reset();
@@ -266,13 +278,6 @@ function resetInviteModal(kind) {
   )).join("");
   inviteForm.role.value = CARE_CIRCLE_ROLES.MEMBER;
   fillRelationshipSelect(inviteForm.relationship, kind, defaultRelationship(kind));
-  const typeField = qs("[data-professional-field]");
-  typeField.hidden = !types.length;
-  inviteForm.professionalType.innerHTML = types.map((item) => (
-    `<option value="${item.id}">${escapeHtml(item.label)}</option>`
-  )).join("");
-  inviteForm.professionalType.required = Boolean(types.length);
-  if (types.length) inviteForm.professionalType.value = defaultProfessionalType(kind);
   latestInviteShare = null;
   inviteCompose.hidden = false;
   inviteSent.hidden = true;
@@ -285,7 +290,10 @@ function syncInviteChannel() {
   emailField.hidden = channel === "phone";
   invitePhoneField.hidden = channel !== "phone";
   inviteForm.email.required = channel === "email";
+  inviteForm.email.disabled = channel !== "email";
   inviteForm.phone.required = channel === "phone";
+  inviteForm.phone.disabled = channel !== "phone";
+  qs("[data-phone-country]", invitePhoneField).disabled = channel !== "phone";
   if (channel === "phone") inviteForm.email.value = "";
 }
 
@@ -426,7 +434,6 @@ function invitePayload(form) {
     phoneNational: phone.national || "",
     relationship: form.relationship.value,
     role: form.role.value,
-    professionalType: form.professionalType.value || null,
     message: form.message.value.trim(),
   };
 }

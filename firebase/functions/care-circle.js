@@ -225,7 +225,9 @@ exports.inviteCareCircleMember = async (request) => {
     role: circleRole,
     relationship: security.textOf(relationship).slice(0, 80),
     professionalType: professionalType || null,
-    permissions: Array.isArray(permissions) ? permissions.slice(0, 20) : [],
+    permissions: Array.isArray(permissions) && permissions.length
+      ? permissions.slice(0, 20)
+      : ["view_profile", "view_schedule", "manage_schedule", "message_circle", "view_clinical"],
     status: STATUS.INVITED,
     invitedBy: uid,
     invitedAt: now,
@@ -263,23 +265,31 @@ exports.inviteCareCircleMember = async (request) => {
     ? [{ userId: existingUser.id, email: storedEmail }]
     : (storedEmail ? [{ email: storedEmail }] : []);
   if (noticeRecipients.length) {
-    await notifications.notifyPeople(noticeRecipients, {
-      type: notifications.invitationTypeForKind(kind),
-      title: `You’re invited to ${senior.displayName || "a Famielda household"}’s circle`,
-      body: `${user.displayName || "A family member"} invited you to coordinate care.`,
-      seniorId,
-      inviteId: inviteRef.id,
-      inviteToken: invitePayload.token,
-      actorId: uid,
-      actorName: user.displayName || "",
-    }, uid);
+    try {
+      await notifications.notifyPeople(noticeRecipients, {
+        type: notifications.invitationTypeForKind(kind),
+        title: `You’re invited to ${senior.displayName || "a Famielda household"}’s circle`,
+        body: `${user.displayName || "A family member"} invited you to coordinate care.`,
+        seniorId,
+        inviteId: inviteRef.id,
+        inviteToken: invitePayload.token,
+        actorId: uid,
+        actorName: user.displayName || "",
+      }, uid);
+    } catch (error) {
+      logger.warn("Care circle invite notice failed", { uid, seniorId, message: error.message });
+    }
   }
   logger.info("Care circle invite created", { uid, seniorId, kind, channel: inviteChannel });
-  await analytics.trackInvite(uid, kind, {
-    inviteId: inviteRef.id,
-    seniorId,
-    dedupeKey: `${analytics.inviteEventName(kind)}:${inviteRef.id}`,
-  });
+  try {
+    await analytics.trackInvite(uid, kind, {
+      inviteId: inviteRef.id,
+      seniorId,
+      dedupeKey: `${analytics.inviteEventName(kind)}:${inviteRef.id}`,
+    });
+  } catch (error) {
+    logger.warn("Care circle invite analytics failed", { uid, seniorId, message: error.message });
+  }
   return {
     queued: true,
     inviteId: inviteRef.id,

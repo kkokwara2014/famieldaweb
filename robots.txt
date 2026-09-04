@@ -16,5 +16,6 @@ Disallow: /select-role.html
 Disallow: /auth-action.html
 Disallow: /verify-email.html
 Disallow: /onboarding.html
+Disallow: /invite.html
 
 Sitemap: https://famielda.web.app/sitemap.xml

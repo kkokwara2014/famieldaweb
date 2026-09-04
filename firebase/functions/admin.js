@@ -10,6 +10,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { logger } = require("firebase-functions");
 const notifications = require("./notifications");
 const security = require("./security");
+const mail = require("./mail");
 
 const USERS = "users";
 const SENIORS = "seniors";
@@ -932,15 +933,20 @@ exports.submitPublicContact = async (request) => {
     return { ok: true };
   }
 
-  const name = textOf(request.data?.name).slice(0, 120);
-  const email = emailOf(request.data?.email);
+  const name = textOf(request.data?.name).replace(/\s+/g, " ").slice(0, 120);
+  const email = emailOf(request.data?.email).slice(0, 254);
+  const phone = textOf(request.data?.phone).slice(0, 40);
   const subject = textOf(request.data?.subject).slice(0, 140);
   const body = textOf(request.data?.body).slice(0, 4000);
   const role = textOf(request.data?.role).slice(0, 40);
   const category = textOf(request.data?.category) || "general";
   if (!name) throw new HttpsError("invalid-argument", "Your name is required.");
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (name.length < 2) throw new HttpsError("invalid-argument", "Enter your name.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     throw new HttpsError("invalid-argument", "Enter a valid email so we can reply.");
+  }
+  if (phone && !/^[+()\d.\s-]{7,40}$/.test(phone)) {
+    throw new HttpsError("invalid-argument", "Enter a valid phone number, or leave it blank.");
   }
   if (!subject || subject.length < 4) {
     throw new HttpsError("invalid-argument", "Give the message a short subject.");
@@ -948,41 +954,48 @@ exports.submitPublicContact = async (request) => {
   if (!body || body.length < 12) {
     throw new HttpsError("invalid-argument", "Add a bit more detail so we can help.");
   }
-  const allowedTopics = new Set(["families", "caregivers", "practitioners", "press"]);
+  const allowedRoles = new Set(["family", "caregiver", "practitioner", "other"]);
+  if (role && !allowedRoles.has(role)) {
+    throw new HttpsError("invalid-argument", "That role is not valid.");
+  }
+  const allowedTopics = new Set(["general", "families", "caregivers", "practitioners", "billing", "press"]);
   if (category && !SUPPORT_CATEGORIES.has(category) && !allowedTopics.has(category)) {
     throw new HttpsError("invalid-argument", "That topic is not valid.");
   }
 
   await security.assertRateLimit(`email:${email}`, "contact");
 
-  const ref = db().collection(TICKETS).doc();
-  const now = new Date();
-  const record = {
-    userId: request.auth?.uid || "",
-    userName: name,
+  const submittedAt = new Date().toISOString();
+  const pageUrl = textOf(request.data?.pageUrl).slice(0, 500);
+  const roleLabels = {
+    family: "Family",
+    caregiver: "Caregiver",
+    practitioner: "Health practitioner",
+    other: "Something else",
+  };
+  const topicLabels = {
+    general: "General question",
+    families: "For families",
+    caregivers: "For caregivers",
+    practitioners: "For health practitioners",
+    billing: "Pricing & billing",
+    press: "Press or partnership",
+  };
+
+  await mail.sendContactEnquiry({
+    name,
     email,
+    phone,
+    role: roleLabels[role] || role,
+    category: topicLabels[category] || category,
     subject,
     body,
-    category: SUPPORT_CATEGORIES.has(category) ? category : "general",
-    kind: "contact",
-    priority: "normal",
-    status: SUPPORT.OPEN,
-    pageUrl: textOf(request.data?.pageUrl).slice(0, 500),
-    userAgent: textOf(request.data?.userAgent).slice(0, 300),
-    source: "website",
-    audience: role,
-    replies: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-  await ref.set(record);
-  await security.writeSystemAudit("support.created", {
-    targetId: ref.id,
-    targetType: "ticket",
-    meta: { source: "website", category: record.category },
+    submittedAt,
+    pageUrl,
   });
-  logger.info("Public contact received", { ticketId: ref.id, email });
-  return { ok: true, ticket: serializeTicket({ id: ref.id, data: () => record }) };
+
+  logger.info("Public contact emailed");
+  return { ok: true };
 };
 
 exports.adminCreateSupportTicket = async (request) => {

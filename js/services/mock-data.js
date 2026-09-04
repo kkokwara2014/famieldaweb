@@ -231,6 +231,8 @@ export const mockInvites = [
     seniorName: "Eleanor Walsh",
     email: "kemi@famielda.test",
     phone: "+14105550186",
+    inviteeUserId: "user-kemi",
+    accountState: "existing",
     name: "Kate Walsh",
     kind: CIRCLE_KINDS.FAMILY,
     role: CARE_CIRCLE_ROLES.MEMBER,

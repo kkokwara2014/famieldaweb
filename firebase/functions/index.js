@@ -28,11 +28,13 @@ const verification = require("./verification");
 const referrals = require("./referrals");
 const security = require("./security");
 const monitoring = require("./monitoring");
+const mail = require("./mail");
 
 initializeApp();
 getFirestore().settings({ ignoreUndefinedProperties: true });
 
 const protect = security.protect;
+const CALLABLE = { invoker: "public" };
 
 exports.health = onCall({ invoker: "public" }, async () => ({
   ok: true,
@@ -40,7 +42,7 @@ exports.health = onCall({ invoker: "public" }, async () => ({
   at: new Date().toISOString(),
 }));
 
-exports.inviteCareCircleMember = onCall(protect(careCircle.inviteCareCircleMember, {
+exports.inviteCareCircleMember = onCall(CALLABLE, protect(careCircle.inviteCareCircleMember, {
   rateLimit: "invite",
   audit: "circle.invite",
   sensitive: true,
@@ -379,7 +381,7 @@ exports.createSupportTicket = onCall(protect(adminConsole.createSupportTicket, {
   rateLimit: "ticket",
   audit: "support.created",
 }));
-exports.submitPublicContact = onCall({ invoker: "public" }, protect(adminConsole.submitPublicContact, {
+exports.submitPublicContact = onCall(mail.contactOptions, protect(adminConsole.submitPublicContact, {
   public: true,
   rateLimit: "contact",
 }));

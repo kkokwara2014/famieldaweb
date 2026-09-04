@@ -20,6 +20,13 @@ export const MARKETING_AUTH = [
   { id: "register", href: "register.html", label: "Sign up" },
 ];
 
+export const SUPPORT_EMAIL = "support@famielda.org";
+export const SUPPORT_PHONE = "240-413-7531";
+export const SUPPORT_PHONE_HREF = "tel:+12404137531";
+export const SUPPORT_EMAIL_HREF = "mailto:support@famielda.org";
+export const CONTACT_SUCCESS_MESSAGE = "Your message has been sent successfully. A member of the Famielda team will get in touch with you shortly.";
+export const CONTACT_SEND_FAILED_MESSAGE = "We couldn't send your message right now. Please try again or contact Famielda directly at support@famielda.org.";
+
 export const CONTACT_ROLES = [
   { id: "family", label: "Family" },
   { id: "caregiver", label: "Caregiver" },
