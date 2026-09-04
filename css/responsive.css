@@ -227,6 +227,15 @@
     overflow: auto;
   }
 
+  .modal__actions {
+    justify-content: stretch;
+  }
+
+  .modal__actions .btn {
+    flex: 1 1 8rem;
+    justify-content: center;
+  }
+
   .tabs__list {
     width: 100%;
   }
