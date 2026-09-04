@@ -142,3 +142,38 @@ export function parsePhone({ iso, national }) {
     country,
   };
 }
+
+export function toE164(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return "";
+  const compact = raw.startsWith("+") ? `+${digits}` : `+${digits}`;
+  return /^\+[1-9]\d{7,14}$/.test(compact) ? compact : "";
+}
+
+export function phonesEqual(a, b) {
+  const left = toE164(a) || String(a || "").replace(/\D/g, "");
+  const right = toE164(b) || String(b || "").replace(/\D/g, "");
+  return Boolean(left && right && left === right);
+}
+
+export function splitE164(e164) {
+  const compact = toE164(e164);
+  if (!compact) return null;
+  const digits = compact.slice(1);
+  const ranked = [...PHONE_COUNTRIES].sort((a, b) => {
+    if (b.dial.length !== a.dial.length) return b.dial.length - a.dial.length;
+    if (a.iso === DEFAULT_PHONE_COUNTRY) return -1;
+    if (b.iso === DEFAULT_PHONE_COUNTRY) return 1;
+    return a.name.localeCompare(b.name);
+  });
+  for (const country of ranked) {
+    if (!digits.startsWith(country.dial)) continue;
+    const national = digits.slice(country.dial.length);
+    if (national.length >= country.min && national.length <= country.max) {
+      return { iso: country.iso, national, country };
+    }
+  }
+  return null;
+}

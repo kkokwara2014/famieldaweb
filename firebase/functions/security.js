@@ -54,6 +54,7 @@ const LIMITS = {
   care: { max: 40, windowMs: 60 * 60 * 1000, message: "Too many care-record writes. Try again later." },
   verification: { max: 20, windowMs: 60 * 60 * 1000, message: "Too many verification attempts. Try again later." },
   referral: { max: 12, windowMs: 60 * 60 * 1000, message: "Too many family invites. Try again later." },
+  invitePreview: { max: 40, windowMs: 60 * 60 * 1000, message: "Too many invitation lookups. Try again later." },
   admin: { max: 120, windowMs: 60_000, message: "Admin actions are rate limited." },
   notice: { max: 30, windowMs: 60 * 60 * 1000, message: "Too many notifications. Try again later." },
   contact: { max: 5, windowMs: 60 * 60 * 1000, message: "Too many messages from this network. Try again later." },
@@ -95,6 +96,15 @@ function textOf(value) {
 
 function emailOf(value) {
   return textOf(value).toLowerCase();
+}
+
+function phoneOf(value) {
+  const raw = textOf(value);
+  if (!raw) return "";
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return "";
+  const compact = raw.startsWith("+") ? `+${digits}` : `+${digits}`;
+  return /^\+[1-9]\d{7,14}$/.test(compact) ? compact : "";
 }
 
 function requireUid(request) {

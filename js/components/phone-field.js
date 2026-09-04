@@ -6,6 +6,7 @@ import {
   phoneCountry,
   phoneHint,
   phonePlaceholder,
+  splitE164,
   sortedPhoneCountries,
 } from "../config/phone.js";
 
@@ -66,11 +67,32 @@ export function bindPhoneField(root) {
   return root;
 }
 
-export function readPhoneField(root) {
+export function readPhoneField(root, { optional = false } = {}) {
   const select = root?.querySelector("[data-phone-country]");
   const input = root?.querySelector("[data-phone-national]");
+  const national = String(input?.value || "").trim();
+  if (optional && !national) {
+    return { ok: true, empty: true, iso: select?.value || DEFAULT_PHONE_COUNTRY, e164: "", national: "" };
+  }
   return parsePhone({
     iso: select?.value,
-    national: input?.value,
+    national,
   });
+}
+
+export function setPhoneField(root, { iso, e164, national } = {}) {
+  if (!root) return root;
+  bindPhoneField(root);
+  const select = root.querySelector("[data-phone-country]");
+  const input = root.querySelector("[data-phone-national]");
+  if (!select || !input) return root;
+  const parsed = e164 ? splitE164(e164) : null;
+  const countryIso = iso || parsed?.iso || DEFAULT_PHONE_COUNTRY;
+  select.value = [...select.options].some((option) => option.value === countryIso)
+    ? countryIso
+    : DEFAULT_PHONE_COUNTRY;
+  applyCountry(root, phoneCountry(select.value));
+  const nextNational = national || parsed?.national || "";
+  if (nextNational) input.value = nationalDigits(nextNational, phoneCountry(select.value));
+  return root;
 }

@@ -1,5 +1,6 @@
 import { getBasePath } from "../core/paths.js";
 import { ROLES } from "./constants.js";
+import { inviteContinuePath } from "./invites.js";
 import { hasCompletedOnboarding } from "./onboarding.js";
 import { hasCompletedRoleSetup } from "./roles.js";
 
@@ -18,6 +19,7 @@ export const routes = {
   terms: "/terms.html",
   login: "/login.html",
   register: "/register.html",
+  invite: "/invite.html",
   forgotPassword: "/forgot-password.html",
   verifyEmail: "/verify-email.html",
   authAction: "/auth-action.html",
@@ -52,6 +54,8 @@ export function homeFor(session) {
   if (!session) return routes.login;
   if (!hasCompletedRoleSetup(session)) return routes.selectRole;
   if (!hasCompletedOnboarding(session)) return routes.onboarding;
+  const invited = inviteContinuePath();
+  if (invited) return invited;
   if (session.role === ROLES.ADMIN) return routes.admin;
   if (session.role === ROLES.CAREGIVER) return routes.caregiver;
   if (session.role === ROLES.HEALTH_PRACTITIONER) return routes.practitioner;
@@ -61,6 +65,8 @@ export function homeFor(session) {
 export function postAuthPath(session) {
   if (!hasCompletedRoleSetup(session)) return routes.selectRole;
   if (!hasCompletedOnboarding(session)) return routes.onboarding;
+  const invited = inviteContinuePath();
+  if (invited) return invited;
   const next = safeNextPath("");
   if (!next || next === routes.dashboard || next === routes.appHome || next === routes.selectRole || next === routes.onboarding) {
     return homeFor(session);
