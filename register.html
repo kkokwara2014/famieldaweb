@@ -37,6 +37,7 @@
           <p>Create an account, choose your role, and open the workspace that matches how you care. The same email signs in on Famielda Mobile.</p>
         </header>
         <div id="register-referral" class="alert alert--info" data-referral-note hidden role="status"></div>
+        <div id="register-invite" class="alert alert--info" data-invite-note hidden role="status"></div>
         <div id="register-error" class="alert alert--error" hidden role="alert"></div>
         <form id="register-form" class="form" novalidate>
           <div class="form-row">
@@ -86,7 +87,7 @@
           </label>
           <button class="btn btn--primary btn--block" type="submit">Sign up</button>
         </form>
-        <p class="auth-switch">Already have an account? <a href="login.html">Sign in</a></p>
+        <p class="auth-switch">Already have an account? <a href="login.html" data-invite-login-link>Sign in</a></p>
         <p class="auth-switch">Questions first? <a href="help.html">Help Center</a></p>
       </div>
     </div>

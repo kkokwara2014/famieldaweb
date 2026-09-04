@@ -1,0 +1,28 @@
+.invite-detail {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-16);
+  padding: var(--space-12);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-sand);
+}
+
+.invite-detail dt {
+  font-size: var(--text-sm);
+  color: var(--color-mute);
+}
+
+.invite-detail dd {
+  margin: 0 0 var(--space-8);
+  font-weight: var(--weight-medium);
+}
+
+.invite-detail dd:last-child {
+  margin-bottom: 0;
+}
+
+.invite-actions {
+  display: grid;
+  gap: var(--space-8);
+}

@@ -21,6 +21,8 @@ const seedUsers = [
   createUser({
     id: "user-family",
     email: "family@famielda.test",
+    phone: "+14105550142",
+    phoneCountry: "US",
     displayName: "Sarah Walsh",
     role: ROLES.FAMILY,
     plan: SUBSCRIPTION_PLANS.FAMILY,
@@ -76,6 +78,8 @@ const seedUsers = [
   createUser({
     id: "user-kemi",
     email: "kemi@famielda.test",
+    phone: "+14105550186",
+    phoneCountry: "US",
     displayName: "Kate Walsh",
     role: ROLES.FAMILY,
     plan: SUBSCRIPTION_PLANS.FREE,

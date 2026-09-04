@@ -41,7 +41,7 @@ const ICONS = {
 };
 
 const state = {
-  onboardingPath: ONBOARDING_PATH.CREATE_SENIOR,
+  onboardingPath: incoming.length ? ONBOARDING_PATH.JOIN_EXISTING : ONBOARDING_PATH.CREATE_SENIOR,
   displayName: existingSenior?.displayName || "",
   preferredName: existingSenior?.preferredName || "",
   familyRelationship: session.familyRelationship || "",

@@ -36,6 +36,7 @@
           <h1>Sign in to Famielda</h1>
           <p>Use your Famielda account to open the workspace that matches your role.</p>
         </header>
+        <div id="login-invite" class="alert alert--info" data-invite-note hidden role="status"></div>
         <div id="login-error" class="alert alert--error" hidden role="alert"></div>
         <form id="login-form" class="form" novalidate>
           <div class="field">
@@ -58,7 +59,7 @@
           </label>
           <button class="btn btn--primary btn--block" type="submit">Sign in</button>
         </form>
-        <p class="auth-switch">New here? <a href="register.html">Create an account</a></p>
+        <p class="auth-switch">New here? <a href="register.html" data-invite-register-link>Create an account</a></p>
         <p class="auth-switch">Need help signing in? <a href="help.html">Visit the Help Center</a></p>
         <div class="demo-note">
           Preview accounts<br>

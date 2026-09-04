@@ -25,6 +25,14 @@
       ]
     },
     {
+      "collectionGroup": "careCircleInvites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "phone", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "scheduleVisits",
       "queryScope": "COLLECTION",
       "fields": [

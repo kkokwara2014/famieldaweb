@@ -14,6 +14,7 @@ import { on } from "../core/events.js";
 import { toast } from "../components/toast.js";
 import { setButtonLoading } from "../components/loader.js";
 import { completeFamilyReferral } from "../services/referral-service.js";
+import { roleForInviteKind, readStoredInvitePreview } from "../config/invites.js";
 
 await bootPublicAuth({ redirectSignedIn: false });
 const session = await requireRoleSelection();
@@ -87,7 +88,7 @@ const ICONS = {
 
 const state = {
   step: "role",
-  role: null,
+  role: roleForInviteKind(readStoredInvitePreview()?.kind) || null,
   professionalType: null,
 };
 

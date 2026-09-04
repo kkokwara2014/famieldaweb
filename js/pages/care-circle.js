@@ -29,6 +29,14 @@ import {
 import { professionalTypeLabel, professionalTypesFor } from "../config/roles.js";
 import { avatarHtml } from "../components/avatar.js";
 import { emptyState } from "../components/empty-state.js";
+import { bindPhoneField, readPhoneField } from "../components/phone-field.js";
+import {
+  careCircleInviteUrl,
+  inviteEmailSubject,
+  inviteShareText,
+  mailtoInviteHref,
+  smsInviteHref,
+} from "../config/invites.js";
 import { toast } from "../components/toast.js";
 import { setButtonLoading } from "../components/loader.js";
 import { bindModal, closeModal, openModal, confirmDialog } from "../components/modal.js";
@@ -50,15 +58,20 @@ import { verificationChipHtml } from "../components/verification-banner.js";
 const session = await bootApp({ page: "care-circle" });
 const root = qs("[data-circle-page]");
 const inviteForm = qs("[data-invite-form]");
+const inviteCompose = qs("[data-invite-compose]");
+const inviteSent = qs("[data-invite-sent]");
+const invitePhoneField = qs("[data-invite-phone-field]");
 const permissionsForm = qs("[data-permissions-form]");
 const inviteToken = new URLSearchParams(window.location.search).get("invite") || "";
 
 let state = await getCareCircleState(session, { inviteToken });
 let filter = "all";
+let latestInviteShare = null;
 
 bindModal("invite");
 bindModal("permissions");
 bindModal("upgrade");
+bindPhoneField(invitePhoneField);
 bindPage();
 render();
 
@@ -93,8 +106,14 @@ function bindPage() {
     await runAction(button, () => declineInvitation(button.dataset.declineInvite), "Invitation declined.");
   });
 
+  delegate(root, "click", "[data-copy-invite-link]", async (_event, button) => {
+    const token = button.dataset.copyInviteLink;
+    if (!token) return;
+    await copyText(careCircleInviteUrl(token), "Invite link copied.");
+  });
+
   delegate(root, "click", "[data-resend-invite]", async (_event, button) => {
-    await runAction(button, () => resendInvitation(button.dataset.resendInvite), "Invite sent again.");
+    await runAction(button, () => resendInvitation(button.dataset.resendInvite), "Invite sent again. Share the link if they still need it.");
   });
 
   delegate(root, "click", "[data-revoke-invite]", async (_event, button) => {
@@ -132,6 +151,10 @@ function bindPage() {
     renderGrid();
   });
 
+  on(inviteForm, "change", (event) => {
+    if (event.target.name === "channel") syncInviteChannel();
+  });
+
   on(inviteForm, "submit", async (event) => {
     event.preventDefault();
     const submit = inviteForm.querySelector("[type='submit']");
@@ -139,14 +162,29 @@ function bindPage() {
     try {
       const payload = invitePayload(inviteForm);
       const result = await inviteCareCircleMember(payload);
-      closeModal("invite");
-      inviteForm.reset();
-      toast(`Invite sent to ${result.member.name}.`, { type: "success" });
+      showInviteSent(result);
       await reload();
     } catch (error) {
       handleError(error);
     } finally {
       setButtonLoading(submit, false);
+    }
+  });
+
+  on(inviteSent, "click", async (event) => {
+    const copy = event.target.closest("[data-copy-invite-share]");
+    if (copy) {
+      await copyText(qs("[data-invite-share-url]", inviteSent)?.value, "Invite link copied.");
+      return;
+    }
+    const share = event.target.closest("[data-native-share-invite]");
+    if (share) {
+      await shareInviteLink(latestInviteShare);
+      return;
+    }
+    const another = event.target.closest("[data-invite-another]");
+    if (another) {
+      resetInviteModal(inviteForm.kind.value || CIRCLE_KINDS.FAMILY);
     }
   });
 
@@ -211,12 +249,18 @@ function capacityMessage() {
 }
 
 function openInvite(kind) {
+  resetInviteModal(kind);
+  openModal("invite");
+}
+
+function resetInviteModal(kind) {
   const option = kindOption(kind);
   const types = professionalTypesFor(professionalRoleForKind(kind));
   qs("#invite-title").textContent = `Invite ${option.label.toLowerCase()}`;
   qs("[data-invite-lead]").textContent = `${option.description} They accept before they can see the household record.`;
   inviteForm.reset();
   inviteForm.kind.value = kind;
+  inviteForm.channel.value = "email";
   inviteForm.role.innerHTML = CIRCLE_ROLE_OPTIONS.map((item) => (
     `<option value="${item.id}">${escapeHtml(item.label)}</option>`
   )).join("");
@@ -229,7 +273,105 @@ function openInvite(kind) {
   )).join("");
   inviteForm.professionalType.required = Boolean(types.length);
   if (types.length) inviteForm.professionalType.value = defaultProfessionalType(kind);
-  openModal("invite");
+  latestInviteShare = null;
+  inviteCompose.hidden = false;
+  inviteSent.hidden = true;
+  syncInviteChannel();
+}
+
+function syncInviteChannel() {
+  const channel = inviteForm.channel.value === "phone" ? "phone" : "email";
+  const emailField = qs("[data-invite-email-field]");
+  emailField.hidden = channel === "phone";
+  invitePhoneField.hidden = channel !== "phone";
+  inviteForm.email.required = channel === "email";
+  inviteForm.phone.required = channel === "phone";
+  if (channel === "phone") inviteForm.email.value = "";
+}
+
+function showInviteSent(result) {
+  const invite = result.invite || {};
+  const member = result.member || {};
+  const url = result.shareUrl || careCircleInviteUrl(invite.token);
+  const existing = (result.accountState || invite.accountState) === "existing";
+  const channel = invite.channel === "phone" || (invite.phone && !invite.email) ? "phone" : "email";
+  latestInviteShare = {
+    url,
+    name: member.name || invite.name || "",
+    email: invite.email || member.email || "",
+    phone: invite.phone || member.phone || "",
+    channel,
+    seniorName: state.senior?.displayName || "",
+    invitedByName: state.session?.displayName || "",
+    kind: member.kind || invite.kind || inviteForm.kind.value,
+  };
+  qs("#invite-title").textContent = existing ? "They already have an account" : "Share this invite";
+  qs("[data-invite-lead]").textContent = existing
+    ? `${member.name || "This person"} already has a Famielda account. Share the sign-in link so they can join this household.`
+    : `${member.name || "This person"} is new to Famielda. Share the sign-up link so they can create an account and join.`;
+  qs("[data-invite-sent-kicker]").textContent = existing ? "Sign-in link" : "Sign-up link";
+  qs("[data-invite-sent-lead]").textContent = existing
+    ? "If they are already signed in on another device, they will also see this invitation in Care Circle."
+    : "The link takes them to a private invite page, then to create an account.";
+  qs("[data-invite-share-url]").value = url;
+  const send = qs("[data-invite-send-channel]", inviteSent);
+  const text = inviteShareText({
+    invitedByName: latestInviteShare.invitedByName,
+    seniorName: latestInviteShare.seniorName,
+    kind: latestInviteShare.kind,
+    url,
+  });
+  if (channel === "phone" && latestInviteShare.phone) {
+    send.hidden = false;
+    send.textContent = "Send by text";
+    send.href = smsInviteHref(latestInviteShare.phone, text);
+  } else if (latestInviteShare.email) {
+    send.hidden = false;
+    send.textContent = "Send by email";
+    send.href = mailtoInviteHref(latestInviteShare.email, {
+      subject: inviteEmailSubject(latestInviteShare.seniorName),
+      body: text,
+    });
+  } else {
+    send.hidden = true;
+    send.removeAttribute("href");
+  }
+  inviteCompose.hidden = true;
+  inviteSent.hidden = false;
+  toast(`Invite ready for ${member.name}.`, { type: "success" });
+}
+
+async function copyText(value, success) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(success, { type: "success" });
+  } catch {
+    toast("Copy the link from the field.", { type: "info" });
+  }
+}
+
+async function shareInviteLink(share) {
+  if (!share?.url) return;
+  if (!navigator.share) {
+    await copyText(share.url, "Invite link copied.");
+    return;
+  }
+  try {
+    await navigator.share({
+      title: inviteEmailSubject(share.seniorName),
+      text: inviteShareText({
+        invitedByName: share.invitedByName,
+        seniorName: share.seniorName,
+        kind: share.kind,
+        url: share.url,
+      }),
+      url: share.url,
+    });
+  } catch (error) {
+    if (error?.name !== "AbortError") toast(error.message || "Could not open share sheet.", { type: "error" });
+  }
 }
 
 function openPermissions(member) {
@@ -269,10 +411,19 @@ function checkedPermissions(form) {
 }
 
 function invitePayload(form) {
+  const channel = form.channel.value === "phone" ? "phone" : "email";
+  const phone = channel === "phone" ? readPhoneField(invitePhoneField) : { ok: true, empty: true };
+  if (channel === "phone" && !phone.ok) {
+    throw new Error(phone.error);
+  }
   return {
     kind: form.kind.value,
     name: form.name.value.trim(),
-    email: form.email.value.trim(),
+    channel,
+    email: channel === "email" ? form.email.value.trim() : "",
+    phone: phone.e164 || "",
+    phoneCountry: phone.iso || "",
+    phoneNational: phone.national || "",
     relationship: form.relationship.value,
     role: form.role.value,
     professionalType: form.professionalType.value || null,
@@ -478,7 +629,8 @@ function memberCardHtml(member) {
     member.kind === CIRCLE_KINDS.PRACTITIONER ? "health_practitioner" : "caregiver",
     member.professionalType,
   );
-  const meta = [member.relationship, credential, member.email].filter(Boolean).join(" · ");
+  const contact = member.email || member.phone || "";
+  const meta = [member.relationship, credential, contact].filter(Boolean).join(" · ");
   const waiting = member.status === CIRCLE_STATUS.INVITED || member.status === CIRCLE_STATUS.DECLINED;
 
   return `
@@ -516,7 +668,9 @@ function memberActions(member) {
   if (!state.canManage || member.role === CARE_CIRCLE_ROLES.OWNER) return "";
 
   if (member.status === CIRCLE_STATUS.INVITED && member.invite) {
+    const token = member.invite.token || member.invite.id;
     return `
+      <button class="btn btn--ghost btn--sm" type="button" data-copy-invite-link="${escapeHtml(token)}">Copy link</button>
       <button class="btn btn--ghost btn--sm" type="button" data-resend-invite="${escapeHtml(member.invite.id)}">Resend</button>
       <button class="btn btn--ghost btn--sm" type="button" data-revoke-invite="${escapeHtml(member.invite.id)}">Revoke</button>
     `;

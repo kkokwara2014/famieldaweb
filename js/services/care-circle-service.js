@@ -21,6 +21,12 @@ import {
   circleUsage,
   resolveHouseholdPlan,
 } from "./entitlement-service.js";
+import { parsePhone, phonesEqual, toE164 } from "../config/phone.js";
+import {
+  careCircleInviteUrl,
+  clearStoredInviteToken,
+  persistInvitePreview,
+} from "../config/invites.js";
 import { createCareCircleInvite, createCareCircleMember } from "../models/care-circle.js";
 import { mockCircle, mockInvites } from "./mock-data.js";
 import { storage } from "../core/storage.js";
@@ -64,6 +70,41 @@ function toIso(value) {
 
 function emailsEqual(a, b) {
   return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+}
+
+function inviteMatchesSession(invite, session) {
+  if (!invite || !session) return false;
+  if (invite.inviteeUserId && session.id && invite.inviteeUserId === session.id) return true;
+  if (invite.email && emailsEqual(invite.email, session.email)) return true;
+  if (invite.phone && phonesEqual(invite.phone, session.phone)) return true;
+  return false;
+}
+
+function sameContact(record, email, phone) {
+  if (email && emailsEqual(record?.email, email)) return true;
+  if (phone && phonesEqual(record?.phone, phone)) return true;
+  return false;
+}
+
+function localUsers() {
+  return storage.get("users", []) || [];
+}
+
+function findLocalUserByContact({ email, phone } = {}) {
+  const users = localUsers();
+  if (email) {
+    const hit = users.find((item) => emailsEqual(item.email, email));
+    if (hit) return hit;
+  }
+  if (phone) {
+    const hit = users.find((item) => phonesEqual(item.phone, phone));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function occupies(member) {
+  return member.status === CIRCLE_STATUS.ACTIVE || member.status === CIRCLE_STATUS.INVITED;
 }
 
 function nowIso() {
@@ -131,13 +172,14 @@ function localMembers(seniorId) {
     .filter((item) => !seniorId || item.seniorId === seniorId);
 }
 
-function localInvites({ seniorId, email, token } = {}) {
+function localInvites({ seniorId, email, phone, token } = {}) {
   return Object.values(readLocalMap(INVITES_KEY))
     .map((item) => inviteFrom(item))
     .filter((item) => {
       if (seniorId && item.seniorId !== seniorId) return false;
       if (email && !emailsEqual(item.email, email)) return false;
-      if (token && item.token !== token) return false;
+      if (phone && !phonesEqual(item.phone, phone)) return false;
+      if (token && item.token !== token && item.id !== token) return false;
       return true;
     });
 }
@@ -163,13 +205,15 @@ async function readInvites(filter = {}) {
   const constraints = [];
   if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
   else if (filter.email) constraints.push(sdk.where("email", "==", String(filter.email).trim().toLowerCase()));
+  else if (filter.phone) constraints.push(sdk.where("phone", "==", toE164(filter.phone) || String(filter.phone).trim()));
   else if (filter.token) constraints.push(sdk.where("token", "==", filter.token));
   const docs = await collectionDocs(AUTH.CIRCLE_INVITES_COLLECTION, constraints);
   return docs
     .map((item) => inviteFrom(item))
     .filter((item) => {
       if (filter.email && !emailsEqual(item.email, filter.email)) return false;
-      if (filter.token && item.token !== filter.token) return false;
+      if (filter.phone && !phonesEqual(item.phone, filter.phone)) return false;
+      if (filter.token && item.token !== filter.token && item.id !== filter.token) return false;
       return true;
     });
 }
@@ -202,7 +246,12 @@ async function saveInvite(invite) {
   const ref = record.id
     ? sdk.doc(db, AUTH.CIRCLE_INVITES_COLLECTION, record.id)
     : sdk.doc(sdk.collection(db, AUTH.CIRCLE_INVITES_COLLECTION));
-  const payload = toDoc({ ...record, id: ref.id, email: String(record.email).trim().toLowerCase() });
+  const payload = toDoc({
+    ...record,
+    id: ref.id,
+    email: String(record.email || "").trim().toLowerCase(),
+    phone: toE164(record.phone) || String(record.phone || "").trim(),
+  });
   const data = {
     ...payload,
     updatedAt: sdk.serverTimestamp(),
@@ -224,7 +273,11 @@ function findActor(members, session, senior) {
   if (!session) return null;
   return members.find((member) => (
     member.status !== CIRCLE_STATUS.REMOVED
-    && (member.userId === session.id || emailsEqual(member.email, session.email))
+    && (
+      member.userId === session.id
+      || emailsEqual(member.email, session.email)
+      || (member.phone && phonesEqual(member.phone, session.phone))
+    )
   )) ?? (senior?.ownerId === session.id
     ? members.find((member) => member.role === CARE_CIRCLE_ROLES.OWNER)
     : null);
@@ -295,13 +348,34 @@ function normalizeInviteInput(input = {}) {
     ? input.role
     : CARE_CIRCLE_ROLES.MEMBER;
   const name = String(input.name || "").trim();
+  const channel = input.channel === "phone" ? "phone" : "email";
   const email = String(input.email || "").trim().toLowerCase();
+  let phone = "";
+  let phoneCountry = String(input.phoneCountry || "").trim().toUpperCase();
   const relationship = String(input.relationship || "").trim() || defaultRelationship(kind);
   const professionalRole = professionalRoleForKind(kind);
   let professionalType = input.professionalType || null;
 
   if (!name) throw new Error("Enter their name.");
-  if (!email || !email.includes("@")) throw new Error("Enter a valid email address.");
+
+  if (channel === "phone") {
+    const parsed = parsePhone({
+      iso: input.phoneCountry || phoneCountry,
+      national: input.phoneNational || input.phone,
+    });
+    if (!parsed.ok) {
+      const compact = toE164(input.phone);
+      if (!compact) throw new Error(parsed.error || "Enter a valid phone number.");
+      phone = compact;
+    } else {
+      phone = parsed.e164;
+      phoneCountry = parsed.iso;
+    }
+  } else if (!email || !email.includes("@")) {
+    throw new Error("Enter a valid email address.");
+  } else {
+    phone = toE164(input.phone);
+  }
 
   if (professionalRole) {
     professionalType = professionalType || defaultProfessionalType(kind);
@@ -321,6 +395,9 @@ function normalizeInviteInput(input = {}) {
     role,
     name,
     email,
+    phone,
+    phoneCountry,
+    channel,
     relationship,
     professionalType,
     permissions,
@@ -355,9 +432,52 @@ export async function listPractitioners(seniorId) {
 }
 
 export async function listIncomingInvites(session = getSession()) {
-  if (!session?.email) return [];
-  const invites = await readInvites({ email: session.email });
-  return invites.filter((invite) => invite.status === INVITE_STATUS.PENDING);
+  if (!session?.email && !session?.phone) return [];
+  const batches = [];
+  if (session.email) batches.push(readInvites({ email: session.email }));
+  if (session.phone) batches.push(readInvites({ phone: session.phone }));
+  const invites = (await Promise.all(batches)).flat();
+  const seen = new Set();
+  return invites.filter((invite) => {
+    if (invite.status !== INVITE_STATUS.PENDING || seen.has(invite.id)) return false;
+    if (!inviteMatchesSession(invite, session)) return false;
+    seen.add(invite.id);
+    return true;
+  });
+}
+
+export async function resolveCareCircleInvite(token) {
+  const normalized = String(token || "").trim();
+  if (!normalized) return null;
+  if (usesLiveAuth()) {
+    const preview = await callCloudFunction("resolveCareCircleInvite", { token: normalized }, {
+      fallback: "This invitation could not be found.",
+    });
+    persistInvitePreview(preview);
+    return preview;
+  }
+  const invite = await getInviteByToken(normalized);
+  if (!invite) return null;
+  const session = getSession();
+  const preview = {
+    token: invite.token || invite.id,
+    status: invite.status,
+    name: invite.name,
+    seniorName: invite.seniorName,
+    invitedByName: invite.invitedByName,
+    kind: invite.kind,
+    relationship: invite.relationship,
+    message: invite.message,
+    channel: invite.channel || (invite.phone && !invite.email ? "phone" : "email"),
+    accountState: invite.accountState || (invite.inviteeUserId ? "existing" : "new"),
+    email: invite.email || "",
+    phone: invite.phone || "",
+    loginEmail: invite.email || "",
+    signedIn: Boolean(session?.id),
+    matchesViewer: inviteMatchesSession(invite, session),
+  };
+  persistInvitePreview(preview);
+  return preview;
 }
 
 export async function getInviteByToken(token) {
@@ -403,7 +523,7 @@ export async function getCareCircleState(session = getSession(), { inviteToken }
     ? incoming.find((item) => item.token === token) ?? await getInviteByToken(token)
     : null;
   if (tokenInvite && tokenInvite.status === INVITE_STATUS.PENDING && !incoming.some((item) => item.id === tokenInvite.id)) {
-    if (emailsEqual(tokenInvite.email, session.email)) incoming.unshift(tokenInvite);
+    if (inviteMatchesSession(tokenInvite, session)) incoming.unshift(tokenInvite);
   }
 
   const senior = await getSeniorForUser(session);
@@ -457,16 +577,13 @@ export async function inviteCareCircleMember(input, session = getSession()) {
   const planId = await householdPlanId(senior, session);
   assertCanInviteKind(payload.kind, { session, senior, members, planId });
 
-  if (emailsEqual(payload.email, session.email)) {
+  if (sameContact(session, payload.email, payload.phone)) {
     throw new Error("You are already in this circle.");
   }
 
-  const duplicate = members.find((member) => (
-    emailsEqual(member.email, payload.email)
-    && (member.status === CIRCLE_STATUS.ACTIVE || member.status === CIRCLE_STATUS.INVITED)
-  ));
+  const duplicate = members.find((member) => occupies(member) && sameContact(member, payload.email, payload.phone));
   if (duplicate) {
-    throw new Error(`${duplicate.name || payload.email} is already in this circle.`);
+    throw new Error(`${duplicate.name || payload.email || payload.phone} is already in this circle.`);
   }
 
   if (usesLiveAuth()) {
@@ -480,18 +597,44 @@ export async function inviteCareCircleMember(input, session = getSession()) {
       inviteId: result.inviteId,
       seniorId: senior.id,
     }, session);
+    const token = result.token || result.inviteId;
     return {
-      member: { id: result.memberId, name: payload.name, email: payload.email, kind: payload.kind },
-      invite: { id: result.inviteId, token: result.token },
+      member: {
+        id: result.memberId,
+        name: payload.name,
+        email: result.email || payload.email,
+        phone: result.phone || payload.phone,
+        kind: payload.kind,
+      },
+      invite: {
+        id: result.inviteId,
+        token,
+        channel: result.channel || payload.channel,
+        accountState: result.accountState || "new",
+        email: result.email || payload.email,
+        phone: result.phone || payload.phone,
+      },
+      shareUrl: careCircleInviteUrl(token),
+      accountState: result.accountState || "new",
     };
   }
+
+  const existingUser = findLocalUserByContact({ email: payload.email, phone: payload.phone });
+  if (existingUser && existingUser.id === session.id) {
+    throw new Error("You are already in this circle.");
+  }
+  const storedEmail = payload.email || String(existingUser?.email || "").trim().toLowerCase();
+  const storedPhone = payload.phone || toE164(existingUser?.phone) || "";
+  const accountState = existingUser ? "existing" : "new";
 
   const now = nowIso();
   const member = await saveMember(createCareCircleMember({
     id: usesLiveAuth() ? "" : newId("m"),
     seniorId: senior.id,
     name: payload.name,
-    email: payload.email,
+    email: storedEmail,
+    phone: storedPhone,
+    phoneCountry: payload.phoneCountry,
     role: payload.role,
     relationship: payload.relationship,
     kind: payload.kind,
@@ -509,7 +652,12 @@ export async function inviteCareCircleMember(input, session = getSession()) {
     token: newToken(),
     seniorId: senior.id,
     seniorName: senior.displayName,
-    email: payload.email,
+    email: storedEmail,
+    phone: storedPhone,
+    phoneCountry: payload.phoneCountry,
+    channel: payload.channel,
+    inviteeUserId: existingUser?.id || null,
+    accountState,
     name: payload.name,
     kind: payload.kind,
     role: payload.role,
@@ -524,14 +672,19 @@ export async function inviteCareCircleMember(input, session = getSession()) {
     createdAt: now,
   }));
 
-  await notifyQuietly([{ email: payload.email }], {
-    type: invitationTypeForKind(payload.kind),
-    title: `You’re invited to ${senior.displayName}’s circle`,
-    body: `${session.displayName} invited you${payload.kind === "caregiver" ? " as a caregiver" : payload.kind === "practitioner" ? " as a health practitioner" : ""} to coordinate care.`,
-    seniorId: senior.id,
-    inviteId: invite.id,
-    inviteToken: invite.token,
-  }, session);
+  const noticeRecipients = existingUser
+    ? [{ userId: existingUser.id, email: storedEmail }]
+    : (storedEmail ? [{ email: storedEmail }] : []);
+  if (noticeRecipients.length) {
+    await notifyQuietly(noticeRecipients, {
+      type: invitationTypeForKind(payload.kind),
+      title: `You’re invited to ${senior.displayName}’s circle`,
+      body: `${session.displayName} invited you${payload.kind === "caregiver" ? " as a caregiver" : payload.kind === "practitioner" ? " as a health practitioner" : ""} to coordinate care.`,
+      seniorId: senior.id,
+      inviteId: invite.id,
+      inviteToken: invite.token,
+    }, session);
+  }
 
   trackInviteSent(payload.kind, {
     dedupeKey: `${inviteEventName(payload.kind)}:${invite.id}`,
@@ -539,7 +692,12 @@ export async function inviteCareCircleMember(input, session = getSession()) {
     inviteId: invite.id,
     seniorId: senior.id,
   }, session);
-  return { member, invite };
+  return {
+    member,
+    invite,
+    shareUrl: careCircleInviteUrl(invite.token),
+    accountState,
+  };
 }
 
 export async function resendInvitation(inviteId, session = getSession()) {
@@ -583,6 +741,7 @@ export async function acceptInvitation(inviteId, session = getSession()) {
   if (usesLiveAuth()) {
     const result = await liveCircle("acceptCareCircleInvite", { inviteId });
     if (result?.seniorId) await attachSenior(session, result.seniorId);
+    clearStoredInviteToken();
     trackProductEvent(PRODUCT_EVENTS.INVITATION_ACCEPTED, {
       dedupeKey: `invitation_accepted:${inviteId}`,
       inviteId,
@@ -605,7 +764,7 @@ export async function acceptInvitation(inviteId, session = getSession()) {
 
   const members = visibleMembers(await readMembers(invite.seniorId));
   let member = members.find((item) => item.id === invite.memberId)
-    ?? members.find((item) => emailsEqual(item.email, invite.email));
+    ?? members.find((item) => sameContact(item, invite.email, invite.phone));
 
   const now = nowIso();
   if (member) {
@@ -614,6 +773,7 @@ export async function acceptInvitation(inviteId, session = getSession()) {
       userId: session.id,
       name: session.displayName || member.name,
       email: session.email || member.email,
+      phone: session.phone || member.phone,
       status: CIRCLE_STATUS.ACTIVE,
       respondedAt: now,
       lastSeenAt: now,
@@ -625,6 +785,7 @@ export async function acceptInvitation(inviteId, session = getSession()) {
       userId: session.id,
       name: session.displayName || invite.name,
       email: session.email || invite.email,
+      phone: session.phone || invite.phone,
       role: invite.role,
       relationship: invite.relationship,
       kind: invite.kind,
@@ -647,6 +808,7 @@ export async function acceptInvitation(inviteId, session = getSession()) {
   });
   await addMemberId(senior, session.id);
   await attachSenior(session, invite.seniorId);
+  clearStoredInviteToken();
   await notifyQuietly([{ userId: invite.invitedBy }], {
     type: NOTIFICATION_TYPES.INVITATION_ACCEPTED,
     title: `${session.displayName || member.name} accepted the invitation`,
@@ -679,6 +841,7 @@ export async function acceptInvitation(inviteId, session = getSession()) {
 export async function declineInvitation(inviteId, session = getSession()) {
   if (usesLiveAuth()) {
     await liveCircle("declineCareCircleInvite", { inviteId });
+    clearStoredInviteToken();
     return true;
   }
   const invite = await requireIncomingInvite(inviteId, session);
@@ -687,17 +850,18 @@ export async function declineInvitation(inviteId, session = getSession()) {
 
   const members = visibleMembers(await readMembers(invite.seniorId));
   const member = members.find((item) => item.id === invite.memberId)
-    ?? members.find((item) => emailsEqual(item.email, invite.email));
+    ?? members.find((item) => sameContact(item, invite.email, invite.phone));
   if (member && member.status !== CIRCLE_STATUS.ACTIVE) {
     await saveMember({ ...member, status: CIRCLE_STATUS.DECLINED, respondedAt: now });
   }
   await notifyQuietly([{ userId: invite.invitedBy }], {
     type: NOTIFICATION_TYPES.INVITATION_DECLINED,
-    title: `${session.displayName || invite.name || invite.email} declined the invitation`,
+    title: `${session.displayName || invite.name || invite.email || invite.phone} declined the invitation`,
     body: `${session.displayName || invite.name || "Someone"} declined to join ${invite.seniorName || "the circle"}.`,
     seniorId: invite.seniorId,
     inviteId: invite.id,
   }, session);
+  clearStoredInviteToken();
   return true;
 }
 
@@ -778,7 +942,7 @@ export async function listMembershipsForSession(session = getSession()) {
       .map((item) => memberFrom(item))
       .filter((member) => (
         member.status === CIRCLE_STATUS.ACTIVE
-        && (member.userId === session.id || emailsEqual(member.email, session.email))
+        && (member.userId === session.id || emailsEqual(member.email, session.email) || phonesEqual(member.phone, session.phone))
       ));
   }
 
@@ -808,7 +972,7 @@ export async function updateOwnPresence(seniorId, patch = {}, session = getSessi
   if (!seniorId || !session) throw new Error("Sign in to update your status.");
   const members = visibleMembers(await readMembers(seniorId));
   const me = members.find((member) => (
-    member.userId === session.id || emailsEqual(member.email, session.email)
+    member.userId === session.id || emailsEqual(member.email, session.email) || phonesEqual(member.phone, session.phone)
   ));
   if (!me) throw new Error("You are not on this circle.");
   const next = {
@@ -829,7 +993,7 @@ export async function updateOwnPresence(seniorId, patch = {}, session = getSessi
 }
 
 async function requireIncomingInvite(inviteId, session) {
-  if (!session?.email) throw new Error("Sign in to respond to this invitation.");
+  if (!session?.email && !session?.phone) throw new Error("Sign in to respond to this invitation.");
   const incoming = await listIncomingInvites(session);
   const invite = incoming.find((item) => item.id === inviteId || item.token === inviteId);
   if (!invite) throw new Error("This invitation is not waiting for you.");
@@ -847,6 +1011,6 @@ async function loadManagedInvite(inviteId, session) {
   const invite = invites.find((item) => item.id === inviteId);
   if (!invite) throw new Error("That invitation could not be found.");
   const member = members.find((item) => item.id === invite.memberId)
-    ?? members.find((item) => emailsEqual(item.email, invite.email));
+    ?? members.find((item) => sameContact(item, invite.email, invite.phone));
   return { senior, invite, member };
 }

@@ -7,6 +7,13 @@ import { toast } from "../components/toast.js";
 import { setButtonLoading } from "../components/loader.js";
 import { usesLiveAuth } from "../core/firebase.js";
 import { maybeClaimStoredReferral } from "../services/referral-service.js";
+import {
+  inviteRegisterPath,
+  persistInviteToken,
+  readStoredInvitePreview,
+  readStoredInviteToken,
+} from "../config/invites.js";
+import { resolveCareCircleInvite } from "../services/care-circle-service.js";
 
 await bootPublicAuth({ navLabel: "Log in" });
 
@@ -17,6 +24,12 @@ if (usesLiveAuth()) {
 
 const form = qs("#login-form");
 const errorBox = qs("#login-error");
+const inviteNote = qs("[data-invite-note]");
+const inviteToken = persistInviteToken(readStoredInviteToken());
+const invitePreview = await loadInvitePreview(inviteToken);
+if (invitePreview && inviteNote) {
+  applyInviteToLogin(invitePreview);
+}
 
 on(form, "submit", async (event) => {
   event.preventDefault();
@@ -45,3 +58,26 @@ on(form, "submit", async (event) => {
     setButtonLoading(submit, false);
   }
 });
+
+async function loadInvitePreview(token) {
+  if (!token) return readStoredInvitePreview();
+  const stored = readStoredInvitePreview();
+  if (stored?.token === token) return stored;
+  try {
+    return await resolveCareCircleInvite(token);
+  } catch {
+    return stored;
+  }
+}
+
+function applyInviteToLogin(preview) {
+  const household = preview.seniorName || "a Famielda household";
+  inviteNote.hidden = false;
+  inviteNote.textContent = preview.accountState === "existing"
+    ? `${preview.invitedByName || "A family member"} invited you to ${household}. Sign in to join the care circle.`
+    : `${preview.invitedByName || "A family member"} invited you to ${household}. Sign in if you already have a Famielda account.`;
+  const email = preview.loginEmail || preview.email;
+  if (email && !form.email.value) form.email.value = email;
+  const registerLink = qs("[data-invite-register-link]");
+  if (registerLink) registerLink.href = inviteRegisterPath(preview.token).replace(/^\//, "");
+}

@@ -35,41 +35,82 @@
       <button type="button" class="modal__dismiss" data-close-modal aria-label="Close dialog">✕</button>
       <h2 id="invite-title">Invite to the circle</h2>
       <p class="modal__body" data-invite-lead>They will be asked to accept before they can see the household record.</p>
-      <form class="form" data-invite-form>
-        <input type="hidden" name="kind" value="family">
-        <div class="form-row">
+      <div data-invite-compose>
+        <form class="form" data-invite-form>
+          <input type="hidden" name="kind" value="family">
           <div class="field">
             <label for="invite-name">Full name</label>
-            <input id="invite-name" name="name" type="text" required placeholder="Maya Chen">
+            <input id="invite-name" name="name" type="text" required placeholder="Maya Chen" autocomplete="name">
           </div>
-          <div class="field">
+          <fieldset class="channel-switch">
+            <legend>Invite with</legend>
+            <div class="channel-switch__list" role="radiogroup" aria-label="Invite with">
+              <label class="channel-switch__option">
+                <input type="radio" name="channel" value="email" checked>
+                <span>Email</span>
+              </label>
+              <label class="channel-switch__option">
+                <input type="radio" name="channel" value="phone">
+                <span>Phone</span>
+              </label>
+            </div>
+          </fieldset>
+          <div class="field" data-invite-email-field>
             <label for="invite-email">Email</label>
-            <input id="invite-email" name="email" type="email" required placeholder="maya@example.com">
+            <input id="invite-email" name="email" type="email" required placeholder="maya@example.com" autocomplete="email">
           </div>
-        </div>
-        <div class="form-row">
+          <div class="field" data-invite-phone-field data-phone-field hidden>
+            <label for="invite-phone">Phone</label>
+            <div class="phone-input" dir="ltr">
+              <label class="visually-hidden" for="invite-phone-country">Country code</label>
+              <select id="invite-phone-country" name="phoneCountry" data-phone-country autocomplete="tel-country-code" aria-label="Country code">
+                <option value="US" selected>🇺🇸 +1 US</option>
+              </select>
+              <input id="invite-phone" name="phone" type="tel" inputmode="numeric" autocomplete="tel-national" data-phone-national maxlength="10" placeholder="2025550147" aria-describedby="invite-phone-hint">
+            </div>
+            <p class="hint" id="invite-phone-hint" data-phone-hint>🇺🇸 +1 · 10 digits for United States</p>
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label for="invite-relationship">Relationship</label>
+              <select id="invite-relationship" name="relationship" class="select" required></select>
+            </div>
+            <div class="field">
+              <label for="invite-role">Access</label>
+              <select id="invite-role" name="role" class="select" required></select>
+            </div>
+          </div>
+          <div class="field" data-professional-field hidden>
+            <label for="invite-type">Professional type</label>
+            <select id="invite-type" name="professionalType" class="select"></select>
+          </div>
           <div class="field">
-            <label for="invite-relationship">Relationship</label>
-            <select id="invite-relationship" name="relationship" class="select" required></select>
+            <label for="invite-message">Note <span class="hint">(optional)</span></label>
+            <textarea id="invite-message" name="message" rows="3" placeholder="Why you are asking them to join"></textarea>
           </div>
-          <div class="field">
-            <label for="invite-role">Access</label>
-            <select id="invite-role" name="role" class="select" required></select>
+          <div class="modal__actions">
+            <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
+            <button class="btn btn--primary" type="submit">Send invite</button>
           </div>
-        </div>
-        <div class="field" data-professional-field hidden>
-          <label for="invite-type">Professional type</label>
-          <select id="invite-type" name="professionalType" class="select"></select>
-        </div>
+        </form>
+      </div>
+      <div class="invite-sent" data-invite-sent hidden>
+        <p class="invite-sent__kicker" data-invite-sent-kicker>Invitation ready</p>
+        <p class="invite-sent__lead" data-invite-sent-lead></p>
         <div class="field">
-          <label for="invite-message">Note <span class="hint">(optional)</span></label>
-          <textarea id="invite-message" name="message" rows="3" placeholder="Why you are asking them to join"></textarea>
+          <label for="invite-share-url">Invite link</label>
+          <input id="invite-share-url" data-invite-share-url readonly>
+        </div>
+        <div class="invite-sent__actions">
+          <button class="btn btn--primary" type="button" data-copy-invite-share>Copy link</button>
+          <button class="btn btn--ghost" type="button" data-native-share-invite>Share</button>
+          <a class="btn btn--ghost" data-invite-send-channel hidden>Send message</a>
         </div>
         <div class="modal__actions">
-          <button class="btn btn--ghost" type="button" data-close-modal>Cancel</button>
-          <button class="btn btn--primary" type="submit">Send invite</button>
+          <button class="btn btn--ghost" type="button" data-invite-another>Invite someone else</button>
+          <button class="btn btn--primary" type="button" data-close-modal>Done</button>
         </div>
-      </form>
+      </div>
     </div>
   </div>
 

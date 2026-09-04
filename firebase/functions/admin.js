@@ -196,6 +196,8 @@ function serializeInvite(doc) {
   return {
     id: doc.id || data.id || "",
     email: data.email || "",
+    phone: data.phone || "",
+    channel: data.channel || "",
     name: data.name || "",
     kind: data.kind || "family",
     role: data.role || "",
@@ -701,7 +703,7 @@ exports.adminListInvites = async (request) => {
   const hasMore = snap.docs.length > limit;
   let invites = snap.docs.slice(0, limit).map(serializeInvite);
   if (query) {
-    invites = invites.filter((item) => matchesQuery(`${item.email} ${item.name} ${item.seniorName}`, query));
+    invites = invites.filter((item) => matchesQuery(`${item.email} ${item.phone} ${item.name} ${item.seniorName}`, query));
   }
   invites.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   return { invites, total: invites.length, hasMore };

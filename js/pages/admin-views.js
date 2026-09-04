@@ -561,8 +561,8 @@ export function invitationsHtml({ invites = [], status = "all", query = "" } = {
             ${invites.length ? invites.map((invite) => `
               <tr>
                 <td>
-                  <strong>${escapeHtml(invite.name || invite.email)}</strong>
-                  <div class="person__meta">${escapeHtml(invite.email)}</div>
+                  <strong>${escapeHtml(invite.name || invite.email || invite.phone)}</strong>
+                  <div class="person__meta">${escapeHtml(invite.email || invite.phone || "—")}</div>
                 </td>
                 <td>${escapeHtml(invite.seniorName || invite.seniorId || "—")}</td>
                 <td>${escapeHtml(invite.kind === CIRCLE_KINDS.CAREGIVER ? "Caregiver" : invite.kind === CIRCLE_KINDS.PRACTITIONER ? "Practitioner" : "Family")}</td>

@@ -477,5 +477,6 @@ module.exports = {
   redact,
   protect,
   emailOf,
+  phoneOf,
   textOf,
 };

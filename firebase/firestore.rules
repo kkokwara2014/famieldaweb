@@ -384,6 +384,14 @@ service cloud.firestore {
       allow read: if isActiveUser() && (
         resource.data.invitedBy == request.auth.uid
         || resource.data.email == emailOf()
+        || (
+          'phone' in resource.data
+          && resource.data.phone != ''
+          && hasUserDoc()
+          && 'phone' in userDoc()
+          && userDoc().phone != ''
+          && resource.data.phone == userDoc().phone
+        )
         || isSeniorMemberOf(resource.data.seniorId)
         || isAdmin()
       );

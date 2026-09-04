@@ -6,18 +6,28 @@ import { go, homeFor, routes } from "../config/routes.js";
 import { AUTH } from "../config/constants.js";
 import { toast } from "../components/toast.js";
 import { setButtonLoading } from "../components/loader.js";
-import { bindPhoneField, readPhoneField } from "../components/phone-field.js";
+import { bindPhoneField, readPhoneField, setPhoneField } from "../components/phone-field.js";
 import { usesLiveAuth } from "../core/firebase.js";
 import { persistReferralCode, readStoredReferralCode } from "../config/referrals.js";
 import { claimFamilyReferral, resolveFamilyReferralCode } from "../services/referral-service.js";
+import {
+  inviteLoginPath,
+  persistInviteToken,
+  readStoredInvitePreview,
+  readStoredInviteToken,
+  splitInviteName,
+} from "../config/invites.js";
+import { resolveCareCircleInvite } from "../services/care-circle-service.js";
 
 await bootPublicAuth({ navLabel: "register" });
 
 const form = qs("#register-form");
 const errorBox = qs("#register-error");
 const referralNote = qs("[data-referral-note]");
+const inviteNote = qs("[data-invite-note]");
 const phoneRoot = qs("[data-phone-field]");
 const storedCode = persistReferralCode(readStoredReferralCode());
+const inviteToken = persistInviteToken(readStoredInviteToken());
 const NAME_PATTERN = /^[\p{L}][\p{L}\p{M}'’. \-]{0,39}$/u;
 
 bindPhoneField(phoneRoot);
@@ -28,6 +38,11 @@ if (storedCode && referralNote) {
   referralNote.textContent = preview?.referrerName
     ? `${preview.referrerName} invited you to Famielda. Create an account to start your own household.`
     : "You are joining from a family invite. Create an account to start your own household.";
+}
+
+const invitePreview = await loadInvitePreview(inviteToken);
+if (invitePreview && inviteNote) {
+  applyInviteToRegister(invitePreview);
 }
 
 function showError(message, field) {
@@ -49,6 +64,41 @@ function readName(value, label) {
     return { ok: false, error: `Use letters, spaces, hyphens, or apostrophes for your ${label}.` };
   }
   return { ok: true, value: name };
+}
+
+async function loadInvitePreview(token) {
+  if (!token) return readStoredInvitePreview();
+  const stored = readStoredInvitePreview();
+  if (stored?.token === token) return stored;
+  try {
+    return await resolveCareCircleInvite(token);
+  } catch {
+    return stored;
+  }
+}
+
+function applyInviteToRegister(preview) {
+  const household = preview.seniorName || "a Famielda household";
+  inviteNote.hidden = false;
+  inviteNote.textContent = preview.accountState === "existing"
+    ? `${preview.invitedByName || "A family member"} invited you to ${household}. Sign in if you already have this account.`
+    : `${preview.invitedByName || "A family member"} invited you to ${household}. Create an account to join the care circle.`;
+  const names = splitInviteName(preview.name);
+  if (names.firstName && !form.firstName.value) form.firstName.value = names.firstName;
+  if (names.lastName && !form.lastName.value) form.lastName.value = names.lastName;
+  if (preview.email) {
+    form.email.value = preview.email;
+    form.email.readOnly = preview.channel !== "phone";
+  }
+  if (preview.phone) {
+    setPhoneField(phoneRoot, { e164: preview.phone });
+    if (preview.channel === "phone") {
+      form.phone.readOnly = true;
+      qs("[data-phone-country]", phoneRoot).disabled = true;
+    }
+  }
+  const loginLink = qs("[data-invite-login-link]");
+  if (loginLink) loginLink.href = inviteLoginPath(preview.token).replace(/^\//, "");
 }
 
 on(form, "submit", async (event) => {

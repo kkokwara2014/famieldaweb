@@ -46,6 +46,10 @@ exports.inviteCareCircleMember = onCall(protect(careCircle.inviteCareCircleMembe
   sensitive: true,
   targetType: "invite",
 }));
+exports.resolveCareCircleInvite = onCall({ invoker: "public" }, protect(careCircle.resolveCareCircleInvite, {
+  public: true,
+  rateLimit: "invitePreview",
+}));
 exports.acceptCareCircleInvite = onCall(protect(careCircle.acceptCareCircleInvite, {
   rateLimit: "invite",
   audit: "circle.accept",

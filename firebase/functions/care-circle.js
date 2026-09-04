@@ -64,19 +64,108 @@ function occupies(member) {
   return member.status === STATUS.ACTIVE || member.status === STATUS.INVITED;
 }
 
-exports.inviteCareCircleMember = async (request) => {
-  const { seniorId, email, name, kind, role, relationship, professionalType, permissions, message } = request.data || {};
-  const normalizedEmail = security.emailOf(email);
-  if (!seniorId || !normalizedEmail || !kind) {
-    throw new HttpsError("invalid-argument", "seniorId, email, and kind are required.");
+function sameContact(record, email, phone) {
+  if (email && security.emailOf(record?.email) === email) return true;
+  if (phone && security.phoneOf(record?.phone) && security.phoneOf(record.phone) === phone) return true;
+  return false;
+}
+
+async function findUserByContact({ email, phone }) {
+  if (email) {
+    const snap = await db().collection(USERS).where("email", "==", email).limit(2).get();
+    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
   }
-  if (!normalizedEmail.includes("@") || normalizedEmail.length > 160) {
+  if (phone) {
+    const snap = await db().collection(USERS).where("phone", "==", phone).limit(2).get();
+    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
+  }
+  return null;
+}
+
+function inviteMatchesUser(invite, user, authEmail) {
+  const uid = user?.id || user?.uid;
+  if (invite?.inviteeUserId && uid && invite.inviteeUserId === uid) return true;
+  const email = security.emailOf(authEmail || user?.email);
+  const phone = security.phoneOf(user?.phone);
+  if (invite?.email && security.emailOf(invite.email) === email) return true;
+  if (invite?.phone && security.phoneOf(invite.phone) && security.phoneOf(invite.phone) === phone) return true;
+  return false;
+}
+
+async function loadInviteByToken(token) {
+  const id = security.textOf(token);
+  if (!id || id.length > 80) return null;
+  const byId = await db().doc(`${INVITES}/${id}`).get();
+  if (byId.exists) {
+    const data = byId.data();
+    if (!data.token || data.token === id) return { id: byId.id, ...data };
+  }
+  const byToken = await db().collection(INVITES).where("token", "==", id).limit(1).get();
+  if (byToken.empty) return null;
+  const doc = byToken.docs[0];
+  return { id: doc.id, ...doc.data() };
+}
+
+function publicInvitePreview(invite, extras = {}) {
+  const channel = invite.channel === "phone" || (invite.phone && !invite.email) ? "phone" : "email";
+  const existing = Boolean(invite.inviteeUserId || invite.accountState === "existing");
+  return {
+    token: invite.token || invite.id,
+    status: invite.status || INVITE.PENDING,
+    name: invite.name || "",
+    seniorName: invite.seniorName || "",
+    invitedByName: invite.invitedByName || "",
+    kind: invite.kind || "family",
+    relationship: invite.relationship || "",
+    message: security.textOf(invite.message).slice(0, 500),
+    channel,
+    accountState: existing ? "existing" : "new",
+    email: security.emailOf(invite.email),
+    phone: security.phoneOf(invite.phone),
+    loginEmail: security.emailOf(invite.email),
+    ...extras,
+  };
+}
+
+function inviteChannelOf(channel, email, phone) {
+  if (channel === "phone" || (!email && phone)) return "phone";
+  return "email";
+}
+
+exports.inviteCareCircleMember = async (request) => {
+  const {
+    seniorId,
+    email,
+    phone,
+    phoneCountry,
+    channel,
+    name,
+    kind,
+    role,
+    relationship,
+    professionalType,
+    permissions,
+    message,
+  } = request.data || {};
+  const normalizedEmail = security.emailOf(email);
+  const normalizedPhone = security.phoneOf(phone);
+  if (!seniorId || !kind) {
+    throw new HttpsError("invalid-argument", "seniorId and kind are required.");
+  }
+  if (normalizedEmail && (!normalizedEmail.includes("@") || normalizedEmail.length > 160)) {
     throw new HttpsError("invalid-argument", "Enter a valid email address.");
+  }
+  if (phone && !normalizedPhone) {
+    throw new HttpsError("invalid-argument", "Enter a valid phone number, including country code.");
+  }
+  if (!normalizedEmail && !normalizedPhone) {
+    throw new HttpsError("invalid-argument", "Invite them with an email address or a phone number.");
   }
   if (!KINDS.has(kind)) {
     throw new HttpsError("invalid-argument", "That circle role is not valid.");
   }
   const circleRole = CIRCLE_ROLES.has(role) ? role : "member";
+  const inviteChannel = inviteChannelOf(channel, normalizedEmail, normalizedPhone);
 
   const { uid, user, senior } = await security.requireHousehold(
     request,
@@ -102,20 +191,36 @@ exports.inviteCareCircleMember = async (request) => {
     throw new HttpsError("resource-exhausted", "This household has too many waiting invitations.");
   }
 
-  const duplicate = members.find((member) => (
-    security.emailOf(member.email) === normalizedEmail && occupies(member)
-  ));
+  if (sameContact(user, normalizedEmail, normalizedPhone)) {
+    throw new HttpsError("already-exists", "You are already in this circle.");
+  }
+
+  const duplicate = members.find((member) => occupies(member) && sameContact(member, normalizedEmail, normalizedPhone));
   if (duplicate) {
     throw new HttpsError("already-exists", "That person is already in this circle.");
   }
 
+  const existingUser = await findUserByContact({ email: normalizedEmail, phone: normalizedPhone });
+  if (existingUser && (existingUser.id === uid || existingUser.uid === uid)) {
+    throw new HttpsError("already-exists", "You are already in this circle.");
+  }
+  if (existingUser && members.some((member) => (
+    occupies(member) && (member.userId === existingUser.id || sameContact(member, security.emailOf(existingUser.email), security.phoneOf(existingUser.phone)))
+  ))) {
+    throw new HttpsError("already-exists", "That person is already in this circle.");
+  }
+
+  const storedEmail = normalizedEmail || security.emailOf(existingUser?.email);
+  const storedPhone = normalizedPhone || security.phoneOf(existingUser?.phone);
   const now = new Date();
   const memberRef = db().collection(MEMBERS).doc();
   const inviteRef = db().collection(INVITES).doc();
   const memberPayload = {
     seniorId,
     name: security.textOf(name).slice(0, 120),
-    email: normalizedEmail,
+    email: storedEmail,
+    phone: storedPhone,
+    phoneCountry: security.textOf(phoneCountry).slice(0, 4).toUpperCase(),
     kind,
     role: circleRole,
     relationship: security.textOf(relationship).slice(0, 80),
@@ -131,7 +236,12 @@ exports.inviteCareCircleMember = async (request) => {
     token: inviteRef.id,
     seniorId,
     seniorName: senior.displayName || "",
-    email: normalizedEmail,
+    email: storedEmail,
+    phone: storedPhone,
+    phoneCountry: memberPayload.phoneCountry,
+    channel: inviteChannel,
+    inviteeUserId: existingUser?.id || null,
+    accountState: existingUser ? "existing" : "new",
     name: memberPayload.name,
     kind,
     role: memberPayload.role,
@@ -149,23 +259,55 @@ exports.inviteCareCircleMember = async (request) => {
 
   await memberRef.set(memberPayload);
   await inviteRef.set(invitePayload);
-  await notifications.notifyPeople([{ email: normalizedEmail }], {
-    type: notifications.invitationTypeForKind(kind),
-    title: `You’re invited to ${senior.displayName || "a Famielda household"}’s circle`,
-    body: `${user.displayName || "A family member"} invited you to coordinate care.`,
-    seniorId,
-    inviteId: inviteRef.id,
-    inviteToken: invitePayload.token,
-    actorId: uid,
-    actorName: user.displayName || "",
-  }, uid);
-  logger.info("Care circle invite created", { uid, seniorId, kind });
+  const noticeRecipients = existingUser
+    ? [{ userId: existingUser.id, email: storedEmail }]
+    : (storedEmail ? [{ email: storedEmail }] : []);
+  if (noticeRecipients.length) {
+    await notifications.notifyPeople(noticeRecipients, {
+      type: notifications.invitationTypeForKind(kind),
+      title: `You’re invited to ${senior.displayName || "a Famielda household"}’s circle`,
+      body: `${user.displayName || "A family member"} invited you to coordinate care.`,
+      seniorId,
+      inviteId: inviteRef.id,
+      inviteToken: invitePayload.token,
+      actorId: uid,
+      actorName: user.displayName || "",
+    }, uid);
+  }
+  logger.info("Care circle invite created", { uid, seniorId, kind, channel: inviteChannel });
   await analytics.trackInvite(uid, kind, {
     inviteId: inviteRef.id,
     seniorId,
     dedupeKey: `${analytics.inviteEventName(kind)}:${inviteRef.id}`,
   });
-  return { queued: true, inviteId: inviteRef.id, memberId: memberRef.id, token: invitePayload.token, kind };
+  return {
+    queued: true,
+    inviteId: inviteRef.id,
+    memberId: memberRef.id,
+    token: invitePayload.token,
+    kind,
+    channel: inviteChannel,
+    accountState: invitePayload.accountState,
+    email: storedEmail,
+    phone: storedPhone,
+  };
+};
+
+exports.resolveCareCircleInvite = async (request) => {
+  const token = security.textOf(request.data?.token);
+  if (!token) throw new HttpsError("invalid-argument", "That invitation link is missing.");
+  const invite = await loadInviteByToken(token);
+  if (!invite) throw new HttpsError("not-found", "This invitation could not be found.");
+
+  const preview = publicInvitePreview(invite, { signedIn: false, matchesViewer: false });
+  if (request.auth?.uid) {
+    const user = await security.loadUser(request.auth.uid).catch(() => null);
+    if (user) {
+      preview.signedIn = true;
+      preview.matchesViewer = inviteMatchesUser(invite, user, request.auth.token?.email);
+    }
+  }
+  return preview;
 };
 
 exports.acceptCareCircleInvite = async (request) => {
@@ -178,7 +320,7 @@ exports.acceptCareCircleInvite = async (request) => {
   const inviteSnap = await inviteRef.get();
   if (!inviteSnap.exists) throw new HttpsError("not-found", "Invitation not found.");
   const invite = inviteSnap.data();
-  if (security.emailOf(invite.email) !== email) {
+  if (!inviteMatchesUser(invite, user, email)) {
     throw new HttpsError("permission-denied", "This invitation is not for you.");
   }
   if (invite.status !== INVITE.PENDING) {
@@ -201,7 +343,8 @@ exports.acceptCareCircleInvite = async (request) => {
     await db().doc(`${MEMBERS}/${invite.memberId}`).set({
       userId: uid,
       name: user.displayName || invite.name || "",
-      email,
+      email: email || invite.email || "",
+      phone: security.phoneOf(user.phone) || invite.phone || "",
       status: STATUS.ACTIVE,
       respondedAt: now,
       lastSeenAt: now,
@@ -258,7 +401,7 @@ exports.declineCareCircleInvite = async (request) => {
   const inviteSnap = await inviteRef.get();
   if (!inviteSnap.exists) throw new HttpsError("not-found", "Invitation not found.");
   const invite = inviteSnap.data();
-  if (security.emailOf(invite.email) !== email) {
+  if (!inviteMatchesUser(invite, user, email)) {
     throw new HttpsError("permission-denied", "This invitation is not for you.");
   }
 
@@ -401,17 +544,22 @@ exports.resendCareCircleInvite = async (request) => {
       updatedAt: now,
     }, { merge: true });
   }
-  await notifications.notifyPeople([{ email: invite.email }], {
-    type: notifications.invitationTypeForKind(invite.kind),
-    title: `You’re invited to ${invite.seniorName || "a Famielda household"}’s circle`,
-    body: `${user.displayName || "A family member"} sent the invitation again.`,
-    seniorId: invite.seniorId,
-    inviteId,
-    inviteToken: invite.token,
-    actorId: uid,
-    actorName: user.displayName || "",
-  }, uid);
-  return { ok: true };
+  const noticeRecipients = invite.inviteeUserId
+    ? [{ userId: invite.inviteeUserId, email: invite.email || "" }]
+    : (invite.email ? [{ email: invite.email }] : []);
+  if (noticeRecipients.length) {
+    await notifications.notifyPeople(noticeRecipients, {
+      type: notifications.invitationTypeForKind(invite.kind),
+      title: `You’re invited to ${invite.seniorName || "a Famielda household"}’s circle`,
+      body: `${user.displayName || "A family member"} sent the invitation again.`,
+      seniorId: invite.seniorId,
+      inviteId,
+      inviteToken: invite.token,
+      actorId: uid,
+      actorName: user.displayName || "",
+    }, uid);
+  }
+  return { ok: true, token: invite.token || inviteId, channel: invite.channel || "email" };
 };
 
 exports.ensureOwnerMembership = async (request) => {
