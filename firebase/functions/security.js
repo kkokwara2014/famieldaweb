@@ -10,7 +10,8 @@ const { logger } = require("firebase-functions");
 
 const USERS = "users";
 const SENIORS = "seniors";
-const MEMBERS = "careCircleMembers";
+const MEMBERS = "circleMembers";
+const LEGACY_MEMBERS = "careCircleMembers";
 const AUDIT = "auditLogs";
 const RATE_LIMITS = "rateLimits";
 
@@ -193,7 +194,7 @@ function isActiveCircleMember(member) {
 }
 
 async function loadMembership(seniorId, uid, email) {
-  const members = db().collection(MEMBERS);
+  const members = db().collection(`${SENIORS}/${seniorId}/${MEMBERS}`);
 
   if (uid) {
     const byUser = await members.where("userId", "==", uid).limit(20).get();
@@ -205,6 +206,23 @@ async function loadMembership(seniorId, uid, email) {
     const byEmail = await members.where("email", "==", emailOf(email)).limit(20).get();
     const doc = pickMembershipDoc(byEmail.docs, seniorId);
     if (doc) return { id: doc.id, ...doc.data() };
+  }
+
+  // Backward-compatible: pre-migration top-level careCircleMembers.
+  try {
+    const legacy = db().collection(LEGACY_MEMBERS);
+    if (uid) {
+      const byUser = await legacy.where("userId", "==", uid).limit(20).get();
+      const doc = pickMembershipDoc(byUser.docs, seniorId);
+      if (doc) return { id: doc.id, ...doc.data() };
+    }
+    if (email) {
+      const byEmail = await legacy.where("email", "==", emailOf(email)).limit(20).get();
+      const doc = pickMembershipDoc(byEmail.docs, seniorId);
+      if (doc) return { id: doc.id, ...doc.data() };
+    }
+  } catch (error) {
+    logger.warn("Legacy membership read failed", { seniorId, message: error.message });
   }
 
   return null;

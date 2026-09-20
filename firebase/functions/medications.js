@@ -1,5 +1,5 @@
 const { HttpsError } = require("firebase-functions/v2/https");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue, FieldPath } = require("firebase-admin/firestore");
 const notifications = require("./notifications");
 const entitlements = require("./entitlements");
 
@@ -10,7 +10,7 @@ const MEDICATION_DOSES = "medicationDoses";
 
 const STATUSES = ["active", "paused", "ended"];
 const FREQUENCIES = ["once", "daily", "twice_daily", "three_times", "weekly", "every_other", "as_needed"];
-const OUTCOMES = ["taken", "skipped"];
+const OUTCOMES = ["taken", "skipped", "missed"];
 const REMINDERS = {
   none: null,
   at_time: 0,
@@ -20,6 +20,41 @@ const REMINDERS = {
 
 function db() {
   return getFirestore();
+}
+
+// Canonical placement is seniors/{seniorId}/medications and medicationDoses.
+function medicationsCol(seniorId) {
+  return seniorId
+    ? db().collection(`${SENIORS}/${seniorId}/${MEDICATIONS}`)
+    : db().collection(MEDICATIONS);
+}
+
+function medicationDoc(seniorId, medicationId) {
+  return seniorId
+    ? db().doc(`${SENIORS}/${seniorId}/${MEDICATIONS}/${medicationId}`)
+    : db().doc(`${MEDICATIONS}/${medicationId}`);
+}
+
+function medicationDosesCol(seniorId) {
+  return seniorId
+    ? db().collection(`${SENIORS}/${seniorId}/${MEDICATION_DOSES}`)
+    : db().collection(MEDICATION_DOSES);
+}
+
+async function loadMedication(medicationId) {
+  if (!medicationId) return null;
+  const group = await db().collectionGroup(MEDICATIONS)
+    .where(FieldPath.documentId(), "==", medicationId)
+    .limit(1)
+    .get();
+  if (!group.empty) {
+    const doc = group.docs[0];
+    return { id: doc.id, ...doc.data(), ref: doc.ref };
+  }
+  // Backward-compatible: pre-migration top-level medications.
+  const legacy = await db().doc(`${MEDICATIONS}/${medicationId}`).get();
+  if (legacy.exists) return { id: legacy.id, ...legacy.data(), ref: legacy.ref };
+  return null;
 }
 
 function requireUid(request) {
@@ -87,10 +122,17 @@ exports.saveMedication = async (request) => {
   const status = STATUSES.includes(input.status) ? input.status : "active";
   const startDate = String(input.startDate || "").trim();
   const time = String(input.time || "").trim();
-  const ref = input.medicationId ? db().doc(`${MEDICATIONS}/${input.medicationId}`) : db().collection(MEDICATIONS).doc();
+  const ref = input.medicationId
+    ? medicationDoc(senior.id, input.medicationId)
+    : medicationsCol(senior.id).doc();
   const existing = input.medicationId ? await ref.get() : null;
   if (input.medicationId && (!existing.exists || existing.data().seniorId !== senior.id)) {
-    throw new HttpsError("not-found", "That medication could not be found.");
+    // Backward-compatible: accept a pre-migration top-level medication, then
+    // migrate it into the canonical subcollection on write.
+    const legacy = await db().doc(`${MEDICATIONS}/${input.medicationId}`).get();
+    if (!legacy.exists || legacy.data().seniorId !== senior.id) {
+      throw new HttpsError("not-found", "That medication could not be found.");
+    }
   }
   const payload = {
     seniorId: senior.id,
@@ -138,10 +180,8 @@ exports.saveMedication = async (request) => {
 exports.logMedicationDose = async (request) => {
   const input = request.data || {};
   const uid = requireUid(request);
-  const medRef = db().doc(`${MEDICATIONS}/${input.medicationId}`);
-  const snap = await medRef.get();
-  if (!snap.exists) throw new HttpsError("not-found", "That medication could not be found.");
-  const medication = { id: snap.id, ...snap.data() };
+  const medication = await loadMedication(input.medicationId);
+  if (!medication) throw new HttpsError("not-found", "That medication could not be found.");
   const { user, senior } = await requireHousehold(request, medication.seniorId);
   if (medication.status === "paused" || medication.status === "ended") {
     throw new HttpsError("failed-precondition", "Only active medications on the shared list can be logged.");
@@ -164,7 +204,7 @@ exports.logMedicationDose = async (request) => {
     recordedByName: user.displayName || "",
     recordedAt: FieldValue.serverTimestamp(),
   };
-  const ref = db().collection(MEDICATION_DOSES).doc();
+  const ref = medicationDosesCol(senior.id).doc();
   await ref.set(payload);
   const next = await ref.get();
   return { id: ref.id, ...next.data() };
@@ -172,14 +212,29 @@ exports.logMedicationDose = async (request) => {
 
 exports.dispatchMedicationReminders = async () => {
   const now = new Date().toISOString();
-  const due = await db().collection(MEDICATIONS)
+  const due = await db().collectionGroup(MEDICATIONS)
     .where("reminderSent", "==", false)
     .where("reminderAt", "<=", now)
     .limit(50)
     .get();
+  const docs = [...due.docs];
+  // Backward-compatible: pre-migration top-level medications.
+  try {
+    const legacy = await db().collection(MEDICATIONS)
+      .where("reminderSent", "==", false)
+      .where("reminderAt", "<=", now)
+      .limit(50)
+      .get();
+    const seen = new Set(docs.map((doc) => doc.ref.path));
+    for (const doc of legacy.docs) {
+      if (!seen.has(doc.ref.path)) docs.push(doc);
+    }
+  } catch (error) {
+    // Legacy collection may be absent; canonical data is authoritative.
+  }
 
   let sent = 0;
-  for (const doc of due.docs) {
+  for (const doc of docs) {
     const item = { id: doc.id, ...doc.data() };
     if (item.status === "paused" || item.status === "ended") {
       await doc.ref.set({ reminderSent: true }, { merge: true });
@@ -196,5 +251,5 @@ exports.dispatchMedicationReminders = async () => {
     await doc.ref.set({ reminderSent: true }, { merge: true });
     sent += 1;
   }
-  return { scanned: due.size, sent };
+  return { scanned: docs.length, sent };
 };

@@ -11,6 +11,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
 const USERS = "users";
+const SENIORS = "seniors";
 const VISITS = "scheduleVisits";
 const AVAILABILITY = "caregiverAvailability";
 const LOCKS = "caregiverScheduleLocks";
@@ -22,6 +23,7 @@ const STATUS = {
   CHECKED_IN: "checked_in",
   CHECKED_OUT: "checked_out",
   CANCELLED: "cancelled",
+  EXPIRED: "expired",
 };
 
 const OCCUPYING = [STATUS.ACCEPTED, STATUS.CHECKED_IN];
@@ -32,6 +34,20 @@ const STALE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
 function db() {
   return getFirestore();
+}
+
+// Canonical placement is seniors/{seniorId}/scheduleVisits. Falls back to the
+// pre-migration top-level collection when no senior id is known.
+function visitsCol(seniorId) {
+  return seniorId
+    ? db().collection(`${SENIORS}/${seniorId}/${VISITS}`)
+    : db().collection(VISITS);
+}
+
+function visitDoc(seniorId, visitId) {
+  return seniorId
+    ? db().doc(`${SENIORS}/${seniorId}/${VISITS}/${visitId}`)
+    : db().doc(`${VISITS}/${visitId}`);
 }
 
 function occupies(visit) {
@@ -312,14 +328,29 @@ function visitPayload(visit, id, instants) {
 
 async function occupyingVisitsFor(visit) {
   const found = [];
+  const email = String(visit.caregiverEmail || "").trim().toLowerCase();
+  const group = db().collectionGroup(VISITS);
   if (visit.caregiverUserId) {
-    const snap = await db().collection(VISITS).where("caregiverUserId", "==", visit.caregiverUserId).get();
+    const snap = await group.where("caregiverUserId", "==", visit.caregiverUserId).get();
     found.push(...snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
   }
-  const email = String(visit.caregiverEmail || "").trim().toLowerCase();
   if (email) {
-    const snap = await db().collection(VISITS).where("caregiverEmail", "==", email).get();
+    const snap = await group.where("caregiverEmail", "==", email).get();
     found.push(...snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+  }
+  // Backward-compatible: pre-migration top-level scheduleVisits.
+  try {
+    const legacy = db().collection(VISITS);
+    if (visit.caregiverUserId) {
+      const snap = await legacy.where("caregiverUserId", "==", visit.caregiverUserId).get();
+      found.push(...snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    }
+    if (email) {
+      const snap = await legacy.where("caregiverEmail", "==", email).get();
+      found.push(...snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    }
+  } catch (error) {
+    // Legacy collection may be absent; canonical data is authoritative.
   }
   const seen = new Set();
   return found.filter((item) => {
@@ -344,7 +375,7 @@ async function commitEngagement(visit, { ignoreVisitId } = {}) {
     .map(slotFromVisit);
 
   const keys = professionalLockKeys(visit);
-  const visitRef = visit.id ? db().doc(`${VISITS}/${visit.id}`) : db().collection(VISITS).doc();
+  const visitRef = visit.id ? visitDoc(visit.seniorId, visit.id) : visitsCol(visit.seniorId).doc();
   const lockRefs = keys.map((key) => db().doc(`${LOCKS}/${lockId(key)}`));
 
   await db().runTransaction(async (tx) => {
@@ -568,6 +599,8 @@ module.exports = {
   OCCUPYING,
   DEFAULT_TIME_ZONE,
   MIN_EXTENSION,
+  visitsCol,
+  visitDoc,
   occupies,
   emailsEqual,
   lockId,

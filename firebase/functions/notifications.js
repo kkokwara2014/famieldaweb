@@ -4,7 +4,7 @@ const { logger } = require("firebase-functions");
 
 const USERS = "users";
 const NOTICES = "notifications";
-const TOKENS = "fcmTokens";
+const TOKENS = "devices";
 
 const TYPES = {
   NEW_USER_JOINED: "new_user_joined",
@@ -109,17 +109,28 @@ function prefsAllow(prefs = {}, type) {
   return true;
 }
 
+async function resolveRecipientUserId(payload = {}) {
+  const direct = String(payload.recipientUserId || payload.userId || "").trim();
+  if (direct) return direct;
+  const email = String(payload.email || "").trim().toLowerCase();
+  if (!email) return "";
+  const snap = await db().collection(USERS).where("email", "==", email).limit(1).get();
+  return snap.empty ? "" : snap.docs[0].id;
+}
+
 async function createNotice(payload = {}) {
   const type = payload.type || "system";
   const title = String(payload.title || "").trim();
   if (!title) return null;
+  const recipientUserId = await resolveRecipientUserId(payload);
+  if (!recipientUserId) return null;
   const href = payload.href || noticeHref(type, payload);
-  const ref = db().collection(NOTICES).doc();
+  const ref = db().collection(USERS).doc(recipientUserId).collection(NOTICES).doc();
   const record = {
     type,
     title,
     body: String(payload.body || "").trim(),
-    userId: payload.userId || "",
+    recipientUserId,
     email: String(payload.email || "").trim().toLowerCase(),
     seniorId: payload.seniorId || "",
     href,
@@ -135,7 +146,7 @@ async function createNotice(payload = {}) {
     entityType: payload.entityType || "",
     entityId: payload.entityId || "",
     priority: type === TYPES.EMERGENCY_ALERT ? "emergency" : (payload.priority || "normal"),
-    read: false,
+    isRead: false,
     createdAt: FieldValue.serverTimestamp(),
   };
   await ref.set(record);
@@ -163,7 +174,9 @@ async function notifyPeople(people, payload = {}, actorId = "") {
 async function loadUserPrefs(userId) {
   if (!userId) return {};
   const snap = await db().doc(`${USERS}/${userId}`).get();
-  return snap.exists ? (snap.data().notificationPrefs || {}) : {};
+  if (!snap.exists) return {};
+  const data = snap.data() || {};
+  return data.notificationPreferences || data.notificationPrefs || {};
 }
 
 async function listTokens(userId) {
@@ -178,7 +191,8 @@ async function pruneToken(userId, tokenId) {
 
 async function sendPush(notice) {
   const monitoring = require("./monitoring");
-  if (!notice?.userId) {
+  const recipientUserId = notice?.recipientUserId || notice?.userId || "";
+  if (!recipientUserId) {
     await monitoring.recordNotificationDelivery({
       type: notice?.type,
       skipped: true,
@@ -186,24 +200,24 @@ async function sendPush(notice) {
     });
     return { sent: 0 };
   }
-  const prefs = await loadUserPrefs(notice.userId);
+  const prefs = await loadUserPrefs(recipientUserId);
   if (!prefsAllow(prefs, notice.type)) {
-    logger.info("Push skipped by preference", { type: notice.type, userId: notice.userId });
+    logger.info("Push skipped by preference", { type: notice.type, userId: recipientUserId });
     await monitoring.recordNotificationDelivery({
       type: notice.type,
       skipped: true,
       code: "preference",
-      userId: notice.userId,
+      userId: recipientUserId,
     });
     return { sent: 0 };
   }
-  const tokens = await listTokens(notice.userId);
+  const tokens = await listTokens(recipientUserId);
   if (!tokens.length) {
     await monitoring.recordNotificationDelivery({
       type: notice.type,
       skipped: true,
       code: "no_token",
-      userId: notice.userId,
+      userId: recipientUserId,
     });
     return { sent: 0 };
   }
@@ -240,7 +254,7 @@ async function sendPush(notice) {
     if (item.success) return null;
     const code = item.error?.code || "";
     if (code.includes("registration-token-not-registered") || code.includes("invalid-registration-token")) {
-      return pruneToken(notice.userId, tokens[index].id);
+      return pruneToken(recipientUserId, tokens[index].id);
     }
     return null;
   }));
@@ -257,7 +271,7 @@ async function sendPush(notice) {
     sent: response.successCount,
     failed: response.failureCount,
     code: failCode,
-    userId: notice.userId,
+    userId: recipientUserId,
   });
   return { sent: response.successCount, failed: response.failureCount };
 } catch (error) {
@@ -265,7 +279,7 @@ async function sendPush(notice) {
     type: notice?.type,
     failed: 1,
     code: error.code || "messaging/unknown",
-    userId: notice?.userId || "",
+    userId: recipientUserId,
   });
   throw error;
 }

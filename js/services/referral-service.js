@@ -21,7 +21,12 @@ import {
 } from "../config/referrals.js";
 import { createFamilyReferral, createFamilyReferralProfile } from "../models/referral.js";
 import { storage } from "../core/storage.js";
-import { usesLiveAuth } from "../core/firebase.js";
+import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import {
+  familyReferralCodeIndexCol,
+  familyReferralCodesCol,
+  familyReferralsCol,
+} from "../core/firestore-paths.js";
 import { callCloudFunction } from "../core/functions.js";
 import { getSession, setSession } from "../auth/session.js";
 import { getMockUser, listMockUsers, updateMockUser } from "../auth/auth-service.js";
@@ -57,13 +62,56 @@ function codeFromName(name) {
   return `${slug}-${randomSuffix(4)}`;
 }
 
-function referralFrom(data) {
+function referralFrom(data = {}) {
   return createFamilyReferral({
     ...data,
+    referrerId: data.referrerId || data.referrerUserId || "",
+    inviteeUserId: data.inviteeUserId || data.referredUserId || null,
+    joinedAt: data.joinedAt ?? data.joined_at ?? null,
+    successfulAt: data.successfulAt ?? data.successful_at ?? null,
     createdAt: data.createdAt || nowIso(),
     updatedAt: data.updatedAt || data.createdAt || nowIso(),
     lastSentAt: data.lastSentAt || data.createdAt || null,
   });
+}
+
+async function liveProfileFor(userId) {
+  if (!userId) return null;
+  const db = getFirebaseDb();
+  const sdk = getFirestoreSdk();
+  if (!db || !sdk) return null;
+  const snap = await sdk.getDoc(sdk.doc(familyReferralCodesCol(), userId));
+  if (!snap.exists()) return null;
+  const data = snap.data() || {};
+  return createFamilyReferralProfile({ ...data, userId: data.userId || userId });
+}
+
+async function liveReferralsFor(userId) {
+  if (!userId) return [];
+  const db = getFirebaseDb();
+  const sdk = getFirestoreSdk();
+  if (!db || !sdk) return [];
+  const snap = await sdk.getDocs(
+    sdk.query(familyReferralsCol(), sdk.where("referrerId", "==", userId)),
+  );
+  return snap.docs
+    .map((item) => referralFrom({ ...item.data(), id: item.id }))
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+async function liveReferrerForCode(code) {
+  if (!code) return null;
+  const db = getFirebaseDb();
+  const sdk = getFirestoreSdk();
+  if (!db || !sdk) return null;
+  const snap = await sdk.getDoc(sdk.doc(familyReferralCodeIndexCol(), code));
+  if (!snap.exists()) return null;
+  const data = snap.data() || {};
+  return {
+    code,
+    referrerId: data.referrerId || data.userId || data.referrerUserId || "",
+    referrerName: data.referrerName || data.displayName || "",
+  };
 }
 
 function trialPayload(session) {
@@ -223,7 +271,7 @@ export async function resolveFamilyReferralCode(code) {
     try {
       return await invoke("resolveFamilyReferralCode", { code: normalized });
     } catch {
-      return null;
+      return liveReferrerForCode(normalized);
     }
   }
   const profile = localCodes().find((item) => item.code === normalized);
@@ -238,13 +286,19 @@ export async function resolveFamilyReferralCode(code) {
 export async function getFamilyReferralWorkspace(session = getSession()) {
   if (!session?.id) throw new Error("Sign in to invite your family.");
   if (usesLiveAuth()) {
-    const data = await invoke("getFamilyReferralWorkspace");
-    return {
-      ...data,
-      shareUrl: shareUrl(data.profile?.code),
-      referrals: (data.referrals || []).map(referralFrom),
-      trial: { ...trialPayload(session), ...(data.trial || {}) },
-    };
+    try {
+      const data = await invoke("getFamilyReferralWorkspace");
+      return {
+        ...data,
+        shareUrl: shareUrl(data.profile?.code),
+        referrals: (data.referrals || []).map(referralFrom),
+        trial: { ...trialPayload(session), ...(data.trial || {}) },
+      };
+    } catch (error) {
+      const profile = await liveProfileFor(session.id);
+      if (!profile) throw error;
+      return workspaceFrom(session, profile, await liveReferralsFor(session.id));
+    }
   }
   const profile = ensureLocalProfile(session);
   const referrals = localReferrals()

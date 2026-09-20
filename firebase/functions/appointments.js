@@ -1,12 +1,12 @@
 const { HttpsError } = require("firebase-functions/v2/https");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue, FieldPath } = require("firebase-admin/firestore");
 const notifications = require("./notifications");
 
 const USERS = "users";
 const SENIORS = "seniors";
 const APPOINTMENTS = "appointments";
 
-const STATUSES = ["scheduled", "confirmed", "completed", "cancelled", "missed"];
+const STATUSES = ["scheduled", "confirmed", "completed", "cancelled", "missed", "rescheduled"];
 const REMINDERS = {
   none: null,
   at_time: 0,
@@ -18,6 +18,36 @@ const REMINDERS = {
 
 function db() {
   return getFirestore();
+}
+
+// Canonical placement is seniors/{seniorId}/appointments. Falls back to the
+// pre-migration top-level collection when no senior id is known.
+function appointmentsCol(seniorId) {
+  return seniorId
+    ? db().collection(`${SENIORS}/${seniorId}/${APPOINTMENTS}`)
+    : db().collection(APPOINTMENTS);
+}
+
+function appointmentDoc(seniorId, appointmentId) {
+  return seniorId
+    ? db().doc(`${SENIORS}/${seniorId}/${APPOINTMENTS}/${appointmentId}`)
+    : db().doc(`${APPOINTMENTS}/${appointmentId}`);
+}
+
+async function loadAppointment(appointmentId) {
+  if (!appointmentId) return null;
+  const group = await db().collectionGroup(APPOINTMENTS)
+    .where(FieldPath.documentId(), "==", appointmentId)
+    .limit(1)
+    .get();
+  if (!group.empty) {
+    const doc = group.docs[0];
+    return { id: doc.id, ...doc.data(), ref: doc.ref };
+  }
+  // Backward-compatible: pre-migration top-level appointments.
+  const legacy = await db().doc(`${APPOINTMENTS}/${appointmentId}`).get();
+  if (legacy.exists) return { id: legacy.id, ...legacy.data(), ref: legacy.ref };
+  return null;
 }
 
 function requireUid(request) {
@@ -86,10 +116,17 @@ exports.saveAppointment = async (request) => {
   if (!date || !time) throw new HttpsError("invalid-argument", "Set a date and time for this appointment.");
   const reminder = Object.prototype.hasOwnProperty.call(REMINDERS, input.reminder) ? input.reminder : "1day";
   const status = STATUSES.includes(input.status) ? input.status : "scheduled";
-  const ref = input.appointmentId ? db().doc(`${APPOINTMENTS}/${input.appointmentId}`) : db().collection(APPOINTMENTS).doc();
+  const ref = input.appointmentId
+    ? appointmentDoc(senior.id, input.appointmentId)
+    : appointmentsCol(senior.id).doc();
   const existing = input.appointmentId ? await ref.get() : null;
   if (input.appointmentId && (!existing.exists || existing.data().seniorId !== senior.id)) {
-    throw new HttpsError("not-found", "That appointment could not be found.");
+    // Backward-compatible: accept a pre-migration top-level appointment, then
+    // migrate it into the canonical subcollection on write.
+    const legacy = await db().doc(`${APPOINTMENTS}/${input.appointmentId}`).get();
+    if (!legacy.exists || legacy.data().seniorId !== senior.id) {
+      throw new HttpsError("not-found", "That appointment could not be found.");
+    }
   }
   const payload = {
     seniorId: senior.id,
@@ -124,10 +161,8 @@ exports.saveAppointment = async (request) => {
 exports.cancelAppointment = async (request) => {
   const input = request.data || {};
   const uid = requireUid(request);
-  const ref = db().doc(`${APPOINTMENTS}/${input.appointmentId}`);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError("not-found", "That appointment could not be found.");
-  const appointment = { id: snap.id, ...snap.data() };
+  const appointment = await loadAppointment(input.appointmentId);
+  if (!appointment) throw new HttpsError("not-found", "That appointment could not be found.");
   const { user, senior } = await requireHousehold(request, appointment.seniorId);
   if (!canManage(user, senior)) {
     throw new HttpsError("permission-denied", "You need permission to cancel appointments.");
@@ -135,6 +170,7 @@ exports.cancelAppointment = async (request) => {
   if (appointment.status === "completed") {
     throw new HttpsError("failed-precondition", "A completed appointment cannot be cancelled.");
   }
+  const ref = appointmentDoc(appointment.seniorId, appointment.id);
   await ref.set({
     status: "cancelled",
     reminderSent: true,
@@ -153,10 +189,8 @@ exports.cancelAppointment = async (request) => {
 exports.updateAppointmentStatus = async (request) => {
   const input = request.data || {};
   const uid = requireUid(request);
-  const ref = db().doc(`${APPOINTMENTS}/${input.appointmentId}`);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError("not-found", "That appointment could not be found.");
-  const appointment = { id: snap.id, ...snap.data() };
+  const appointment = await loadAppointment(input.appointmentId);
+  if (!appointment) throw new HttpsError("not-found", "That appointment could not be found.");
   const { user } = await requireHousehold(request, appointment.seniorId);
   if (!canAct(user, appointment) && !canManage(user, { ownerId: appointment.createdBy })) {
     throw new HttpsError("permission-denied", "You can only update appointments assigned to you.");
@@ -166,6 +200,7 @@ exports.updateAppointmentStatus = async (request) => {
   if (appointment.status === "cancelled") {
     throw new HttpsError("failed-precondition", "A cancelled appointment cannot change status.");
   }
+  const ref = appointmentDoc(appointment.seniorId, appointment.id);
   await ref.set({
     status,
     updatedBy: uid,
@@ -178,14 +213,29 @@ exports.updateAppointmentStatus = async (request) => {
 
 exports.dispatchAppointmentReminders = async () => {
   const now = new Date().toISOString();
-  const due = await db().collection(APPOINTMENTS)
+  const due = await db().collectionGroup(APPOINTMENTS)
     .where("reminderSent", "==", false)
     .where("reminderAt", "<=", now)
     .limit(50)
     .get();
+  const docs = [...due.docs];
+  // Backward-compatible: pre-migration top-level appointments.
+  try {
+    const legacy = await db().collection(APPOINTMENTS)
+      .where("reminderSent", "==", false)
+      .where("reminderAt", "<=", now)
+      .limit(50)
+      .get();
+    const seen = new Set(docs.map((doc) => doc.ref.path));
+    for (const doc of legacy.docs) {
+      if (!seen.has(doc.ref.path)) docs.push(doc);
+    }
+  } catch (error) {
+    // Legacy collection may be absent; canonical data is authoritative.
+  }
 
   let sent = 0;
-  for (const doc of due.docs) {
+  for (const doc of docs) {
     const item = { id: doc.id, ...doc.data() };
     if (item.status === "cancelled" || item.status === "completed") {
       await doc.ref.set({ reminderSent: true }, { merge: true });
@@ -202,5 +252,5 @@ exports.dispatchAppointmentReminders = async () => {
     await doc.ref.set({ reminderSent: true }, { merge: true });
     sent += 1;
   }
-  return { scanned: due.size, sent };
+  return { scanned: docs.length, sent };
 };

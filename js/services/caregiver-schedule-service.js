@@ -18,12 +18,12 @@ import { createScheduleVisit, createVisitNote, createVisitReport } from "../mode
 import { mockAvailability, mockVisits } from "./mock-data.js";
 import { storage } from "../core/storage.js";
 import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { getQueryDocs } from "../core/query.js";
+import { familyCaregiversCol, scheduleVisitsCol, visitReportsCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { callCloudFunction } from "../core/functions.js";
 import { getSession, setSession } from "../auth/session.js";
 import { listCareCircle, updateOwnPresence } from "./care-circle-service.js";
-import { getSeniorForUser } from "./senior-service.js";
+import { getSeniorById, getSeniorForUser } from "./senior-service.js";
 import { postActivity } from "./activity-service.js";
 import { notifyQuietly } from "./notification-service.js";
 import { assertProfessionalEligible, withVerificationStatus } from "./verification-service.js";
@@ -63,10 +63,6 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-async function liveVisit(name, data = {}) {
-  return visitFrom(await callCloudFunction(name, data));
-}
-
 async function logVisitActivity(visit, extra = {}, session = getSession()) {
   try {
     await postActivity({
@@ -95,6 +91,53 @@ function toIso(value) {
   return null;
 }
 
+function toMillis(value) {
+  if (value == null) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (typeof value.toDate === "function") return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  return null;
+}
+
+// Mobile stores `startAt`/`endAt` (Timestamp); canonical web fields are
+// `startsAt`/`endsAt` (epoch ms). Derive the legacy `date`/`startTime`/`endTime`
+// strings from the instants when only the epoch form is present.
+function civilParts(utcMs, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: resolveTimeZone(timeZone),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(utcMs));
+  const map = {};
+  for (const part of parts) {
+    if (part.type !== "literal") map[part.type] = part.value;
+  }
+  const hour = map.hour === "24" ? "00" : map.hour;
+  return { date: `${map.year}-${map.month}-${map.day}`, time: `${hour}:${map.minute}` };
+}
+
+const LEGACY_VISIT_STATUS = {
+  pending: VISIT_STATUS.REQUESTED,
+  scheduled: VISIT_STATUS.ACCEPTED,
+  inProgress: VISIT_STATUS.CHECKED_IN,
+  in_progress: VISIT_STATUS.CHECKED_IN,
+  completed: VISIT_STATUS.CHECKED_OUT,
+};
+
+function legacyVisitStatus(data) {
+  if (data.status) return LEGACY_VISIT_STATUS[data.status] ?? data.status;
+  return undefined;
+}
+
 function emailsEqual(a, b) {
   return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 }
@@ -121,8 +164,35 @@ function displayNameOf(record) {
 }
 
 function visitFrom(data) {
+  const startsAt = toMillis(data.startsAt) ?? toMillis(data.startAt);
+  const endsAt = toMillis(data.endsAt) ?? toMillis(data.endAt);
+  const fromStart = startsAt != null && (!data.date || !data.startTime)
+    ? civilParts(startsAt, data.timeZone)
+    : null;
+  const fromEnd = endsAt != null && !data.endTime
+    ? civilParts(endsAt, data.timeZone)
+    : null;
+  const professionalKind = data.professionalKind
+    || (data.professionalRole === "healthPractitioner"
+      ? PROFESSIONAL_KIND.PRACTITIONER
+      : PROFESSIONAL_KIND.CAREGIVER);
   return createScheduleVisit({
     ...data,
+    status: legacyVisitStatus(data),
+    date: data.date || fromStart?.date || "",
+    startTime: data.startTime || fromStart?.time || "",
+    endTime: data.endTime || fromEnd?.time || "",
+    caregiverName: data.caregiverName || data.caregiverDisplayName || "",
+    caregiverMemberId: data.caregiverMemberId || data.caregiverId || "",
+    caregiverUserId: data.caregiverUserId
+      || (data.professionalRole && data.professionalRole !== "healthPractitioner"
+        ? data.professionalId
+        : null),
+    professionalKind,
+    title: data.title
+      || (professionalKind === PROFESSIONAL_KIND.PRACTITIONER ? "Appointment" : "Care visit"),
+    startsAt,
+    endsAt,
     requestedAt: toIso(data.requestedAt),
     respondedAt: toIso(data.respondedAt),
     checkedInAt: toIso(data.checkedInAt),
@@ -145,6 +215,219 @@ function availabilityFrom(data) {
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
   });
+}
+
+const VISIT_LOCATION_FALLBACK = { latitude: 0, longitude: 0 };
+const VISIT_LOCATION_TIMEOUT_MS = 5000;
+
+function visitLocation() {
+  return new Promise((resolve) => {
+    const fallback = { ...VISIT_LOCATION_FALLBACK };
+    if (
+      typeof navigator === "undefined"
+      || !navigator.geolocation
+      || typeof navigator.geolocation.getCurrentPosition !== "function"
+    ) {
+      resolve(fallback);
+      return;
+    }
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(fallback), VISIT_LOCATION_TIMEOUT_MS);
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          clearTimeout(timer);
+          const latitude = Number(position?.coords?.latitude);
+          const longitude = Number(position?.coords?.longitude);
+          finish(Number.isFinite(latitude) && Number.isFinite(longitude)
+            ? { latitude, longitude }
+            : fallback);
+        },
+        () => {
+          clearTimeout(timer);
+          finish(fallback);
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: VISIT_LOCATION_TIMEOUT_MS,
+          maximumAge: 60000,
+        },
+      );
+    } catch {
+      clearTimeout(timer);
+      finish(fallback);
+    }
+  });
+}
+
+function moodFromCondition(condition) {
+  if (condition === "fair") return "tired";
+  if (condition === "concerning") return "unwell";
+  return "good";
+}
+
+function conditionFromMood(mood) {
+  if (mood === "unwell") return "concerning";
+  if (mood === "tired") return "fair";
+  return "good";
+}
+
+function reportFromDoc(data = {}) {
+  const incident = data.incidentType && data.incidentType !== "noIncident" ? data.incidentType : "";
+  return createVisitReport({
+    summary: data.summary || data.notes || "",
+    mood: data.mood || moodFromCondition(data.generalCondition),
+    meals: data.meals || "",
+    mobility: data.mobility || "",
+    concerns: data.concerns || incident,
+    followUp: data.followUp || "",
+    submittedAt: toIso(data.submittedAt || data.createdAt),
+    submittedBy: data.submittedBy || data.caregiverDisplayName || "",
+    submittedById: data.submittedById || data.createdBy || "",
+  });
+}
+
+function reportFromInput(visit, input = {}, session) {
+  return createVisitReport({
+    summary: String(input.summary || "").trim(),
+    mood: input.mood || "typical",
+    meals: String(input.meals || "").trim(),
+    mobility: String(input.mobility || "").trim(),
+    concerns: String(input.concerns || "").trim(),
+    followUp: String(input.followUp || "").trim(),
+    submittedAt: nowIso(),
+    submittedBy: session?.displayName || "",
+    submittedById: session?.id || "",
+  });
+}
+
+async function readReportsForSenior(seniorId) {
+  if (!seniorId || !usesLiveAuth()) return new Map();
+  const sdk = getFirestoreSdk();
+  const snap = await sdk.getDocs(sdk.query(
+    visitReportsCol(seniorId),
+    sdk.limit(QUERY_LIMITS.SCHEDULE),
+  ));
+  const byShift = new Map();
+  for (const doc of snap.docs) {
+    const data = doc.data() || {};
+    const report = reportFromDoc(data);
+    const key = data.shiftId || doc.id;
+    const existing = byShift.get(key);
+    if (!existing || String(report.submittedAt || "").localeCompare(String(existing.submittedAt || "")) >= 0) {
+      byShift.set(key, report);
+    }
+  }
+  return byShift;
+}
+
+async function attachReports(visits) {
+  if (!usesLiveAuth() || !visits.length) return visits;
+  const seniorIds = [...new Set(visits.map((visit) => visit.seniorId).filter(Boolean))];
+  const maps = await Promise.all(seniorIds.map((seniorId) => readReportsForSenior(seniorId)));
+  const bySenior = new Map(seniorIds.map((seniorId, index) => [seniorId, maps[index]]));
+  return visits.map((visit) => {
+    const report = bySenior.get(visit.seniorId)?.get(visit.id);
+    return report ? { ...visit, report } : visit;
+  });
+}
+
+async function readShiftRaw(seniorId, shiftId) {
+  if (!seniorId || !shiftId || !usesLiveAuth()) return null;
+  const sdk = getFirestoreSdk();
+  const snap = await sdk.getDoc(sdk.doc(scheduleVisitsCol(seniorId), shiftId));
+  return snap.exists() ? snap.data() : null;
+}
+
+async function readShiftByPath(seniorId, shiftId) {
+  const raw = await readShiftRaw(seniorId, shiftId);
+  if (!raw) throw new Error("That visit could not be found.");
+  const visit = visitFrom({ id: shiftId, ...raw });
+  const reports = await readReportsForSenior(seniorId);
+  const report = reports.get(shiftId);
+  return report ? { ...visit, report } : visit;
+}
+
+async function writeShiftFields(seniorId, shiftId, fields) {
+  const sdk = getFirestoreSdk();
+  await sdk.updateDoc(sdk.doc(scheduleVisitsCol(seniorId), shiftId), fields);
+}
+
+async function resolveFamilyCaregiverId(familyId, member) {
+  if (!familyId || !member) return null;
+  const sdk = getFirestoreSdk();
+  const constraints = [];
+  if (member.userId) constraints.push(sdk.where("userId", "==", member.userId));
+  else if (member.email) constraints.push(sdk.where("email", "==", String(member.email).trim().toLowerCase()));
+  else return null;
+  const snap = await sdk.getDocs(sdk.query(
+    familyCaregiversCol(familyId),
+    ...constraints,
+    sdk.limit(1),
+  ));
+  return snap.docs[0]?.id || null;
+}
+
+async function shiftAssignmentForMember(member, familyId) {
+  const role = member.kind === CIRCLE_KINDS.PRACTITIONER ? "healthPractitioner" : "caregiver";
+  if (role === "healthPractitioner") {
+    return {
+      caregiverId: null,
+      professionalId: member.userId || member.id || null,
+      professionalRole: role,
+      professionalDisplayName: member.name || null,
+    };
+  }
+  const rosterId = await resolveFamilyCaregiverId(familyId, member);
+  return {
+    caregiverId: rosterId || member.id || null,
+    professionalId: member.userId || null,
+    professionalRole: role,
+    professionalDisplayName: member.name || null,
+  };
+}
+
+async function writeVisitReport(visit, input = {}, session, { note = false } = {}) {
+  const sdk = getFirestoreSdk();
+  const ref = sdk.doc(visitReportsCol(visit.seniorId));
+  const summary = String(input.summary || "").trim();
+  const noteBody = String(input.body || input.note || "").trim();
+  const mood = input.mood || "typical";
+  const concerns = String(input.concerns || "").trim();
+  const caregiverDisplayName = visit.caregiverName || session?.displayName || "";
+  const data = {
+    familyId: visit.familyId,
+    seniorId: visit.seniorId,
+    shiftId: visit.id,
+    generalCondition: conditionFromMood(mood),
+    incidentType: concerns ? "other" : "noIncident",
+    activities: concerns ? ["observation"] : [],
+    notes: summary || noteBody,
+    attachments: [],
+    summary,
+    mood,
+    meals: String(input.meals || "").trim(),
+    mobility: String(input.mobility || "").trim(),
+    concerns,
+    followUp: String(input.followUp || "").trim(),
+    isNote: Boolean(note),
+    submittedBy: session?.displayName || "",
+    submittedById: session?.id || "",
+    createdBy: session?.id || "",
+    createdAt: sdk.serverTimestamp(),
+    updatedAt: sdk.serverTimestamp(),
+  };
+  if (visit.seniorName) data.seniorName = visit.seniorName;
+  if (visit.caregiverMemberId) data.caregiverId = visit.caregiverMemberId;
+  if (caregiverDisplayName) data.caregiverDisplayName = caregiverDisplayName;
+  if (visit.caregiverUserId) data.professionalId = visit.caregiverUserId;
+  await sdk.setDoc(ref, data);
+  return { id: ref.id, ...data };
 }
 
 function toDoc(record) {
@@ -196,8 +479,29 @@ function localAvailability() {
   return Object.values(readLocalMap(AVAIL_KEY)).map((item) => availabilityFrom(item));
 }
 
-async function collectionDocs(collection, constraints = [], options = {}) {
-  return getQueryDocs(collection, constraints, { limit: QUERY_LIMITS.SCHEDULE, ...options });
+async function collectionDocs(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.SCHEDULE;
+  const query = sdk.query(collectionRef, ...constraints, sdk.limit(limit));
+  const snap = await sdk.getDocs(query);
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+}
+
+async function collectionGroupDocs(constraints = [], options = {}) {
+  const db = getFirebaseDb();
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.SCHEDULE;
+  const query = sdk.query(
+    sdk.collectionGroup(db, "scheduleVisits"),
+    ...constraints,
+    sdk.limit(limit),
+  );
+  const snap = await sdk.getDocs(query);
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+}
+
+function availabilityCol() {
+  return getFirestoreSdk().collection(getFirebaseDb(), AUTH.AVAILABILITY_COLLECTION);
 }
 
 async function readVisitById(id) {
@@ -207,9 +511,17 @@ async function readVisitById(id) {
   }
   const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.VISITS_COLLECTION, id));
-  if (!snap.exists()) return null;
-  return visitFrom({ id: snap.id, ...snap.data() });
+  const snap = await sdk.getDocs(sdk.query(
+    sdk.collectionGroup(db, "scheduleVisits"),
+    sdk.where(sdk.documentId(), "==", id),
+    sdk.limit(1),
+  ));
+  const doc = snap.docs[0];
+  if (!doc) return null;
+  const visit = visitFrom({ id: doc.id, ...doc.data() });
+  const reports = await readReportsForSenior(visit.seniorId);
+  const report = reports.get(visit.id);
+  return report ? { ...visit, report } : visit;
 }
 
 async function readAvailabilityById(id) {
@@ -217,9 +529,8 @@ async function readAvailabilityById(id) {
   if (!usesLiveAuth()) {
     return localAvailability().find((item) => item.id === id) ?? null;
   }
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.AVAILABILITY_COLLECTION, id));
+  const snap = await sdk.getDoc(sdk.doc(availabilityCol(), id));
   if (!snap.exists()) return null;
   return availabilityFrom({ id: snap.id, ...snap.data() });
 }
@@ -253,25 +564,23 @@ async function readVisits({ seniorId, session, caregiver } = {}) {
   const sdk = getFirestoreSdk();
   const docs = [];
   if (seniorId) {
-    docs.push(...await collectionDocs(AUTH.VISITS_COLLECTION, [
-      sdk.where("seniorId", "==", seniorId),
-    ]));
+    docs.push(...await collectionDocs(scheduleVisitsCol(seniorId)));
   } else if (caregiver?.caregiverUserId) {
-    docs.push(...await collectionDocs(AUTH.VISITS_COLLECTION, [
+    docs.push(...await collectionGroupDocs([
       sdk.where("caregiverUserId", "==", caregiver.caregiverUserId),
     ]));
   } else if (caregiver?.caregiverEmail) {
-    docs.push(...await collectionDocs(AUTH.VISITS_COLLECTION, [
+    docs.push(...await collectionGroupDocs([
       sdk.where("caregiverEmail", "==", String(caregiver.caregiverEmail).trim().toLowerCase()),
     ]));
   } else if (isProfessionalSession(session)) {
     if (session.id) {
-      docs.push(...await collectionDocs(AUTH.VISITS_COLLECTION, [
+      docs.push(...await collectionGroupDocs([
         sdk.where("caregiverUserId", "==", session.id),
       ]));
     }
     if (session.email) {
-      docs.push(...await collectionDocs(AUTH.VISITS_COLLECTION, [
+      docs.push(...await collectionGroupDocs([
         sdk.where("caregiverEmail", "==", String(session.email).trim().toLowerCase()),
       ]));
     }
@@ -301,12 +610,12 @@ async function readAvailability({ session, caregiver } = {}) {
   const userId = caregiver?.caregiverUserId || (isProfessionalSession(session) ? session.id : "");
   const email = caregiver?.caregiverEmail || session?.email;
   if (userId) {
-    docs.push(...await collectionDocs(AUTH.AVAILABILITY_COLLECTION, [
+    docs.push(...await collectionDocs(availabilityCol(), [
       sdk.where("caregiverUserId", "==", userId),
     ]));
   }
   if (email && !userId) {
-    docs.push(...await collectionDocs(AUTH.AVAILABILITY_COLLECTION, [
+    docs.push(...await collectionDocs(availabilityCol(), [
       sdk.where("caregiverEmail", "==", String(email).trim().toLowerCase()),
     ]));
   }
@@ -325,11 +634,11 @@ async function saveVisitRecord(visit) {
   const record = visitFrom({ ...visit, updatedAt: nowIso() });
   if (!usesLiveAuth()) return visitFrom(writeLocalRecord(VISITS_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = scheduleVisitsCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.VISITS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.VISITS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = {
     ...payload,
@@ -344,11 +653,11 @@ async function saveAvailabilityRecord(window) {
   const record = availabilityFrom({ ...window, updatedAt: nowIso() });
   if (!usesLiveAuth()) return availabilityFrom(writeLocalRecord(AVAIL_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = availabilityCol();
   const ref = record.id
-    ? sdk.doc(db, AUTH.AVAILABILITY_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.AVAILABILITY_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = {
     ...payload,
@@ -534,7 +843,7 @@ export async function listVisits(filter = {}, session = getSession()) {
     session,
     caregiver: filter.caregiver,
   });
-  return visits.sort(bySoonest);
+  return (await attachReports(visits)).sort(bySoonest);
 }
 
 export async function listVisitsForWeek(now = new Date(), session = getSession()) {
@@ -552,17 +861,34 @@ export async function listAvailability(filter = {}, session = getSession()) {
 
 export async function previewScheduleConflict(input, session = getSession()) {
   if (usesLiveAuth()) {
-    return callCloudFunction("previewScheduleConflict", {
-      visitId: input.visitId,
-      caregiverUserId: input.caregiverUserId,
-      caregiverEmail: input.caregiverEmail,
-      caregiverName: input.caregiverName,
-      professionalKind: input.professionalKind,
-      date: input.date,
-      startTime: input.startTime,
-      endTime: input.endTime,
-      timeZone: input.timeZone,
-    });
+    const senior = input.seniorId
+      ? { id: input.seniorId, familyId: input.familyId }
+      : await getSeniorForUser(session);
+    const familyId = input.familyId || senior?.familyId || senior?.ownerId || null;
+    const seniorId = input.seniorId || senior?.id || null;
+    const window = windowInstants(input.date, input.startTime, input.endTime, input.timeZone);
+    if (familyId && seniorId && window) {
+      const result = await callCloudFunction("checkProfessionalAvailability", {
+        familyId,
+        seniorId,
+        caregiverId: input.caregiverMemberId || input.caregiverId || null,
+        professionalId: input.caregiverUserId || null,
+        professionalRole: input.professionalKind === PROFESSIONAL_KIND.PRACTITIONER
+          ? "healthPractitioner"
+          : "caregiver",
+        startAtMs: window.startsAt,
+        endAtMs: window.endsAt,
+        excludeScheduleId: input.visitId || null,
+      });
+      const available = result?.available !== false;
+      return {
+        ok: available,
+        conflict: available ? null : { message: result?.message || "" },
+        message: result?.message || (available ? "" : "That time is not available."),
+        overlap: !available,
+      };
+    }
+    return { ok: true, conflict: null, message: "" };
   }
   const draft = normalizeVisitInput(input, session);
   try {
@@ -582,15 +908,53 @@ export async function previewScheduleConflict(input, session = getSession()) {
 
 export async function requestScheduleVisit(input, session = getSession()) {
   if (usesLiveAuth()) {
-    const saved = await liveVisit("requestScheduleVisit", {
-      seniorId: input.seniorId || session?.seniorId,
-      caregiverId: input.caregiverId || input.practitionerId || input.caregiverEmail,
-      professionalKind: input.professionalKind,
-      title: input.title,
-      date: input.date,
-      startTime: input.startTime,
-      endTime: input.endTime,
-    });
+    const senior = input.seniorId
+      ? await getSeniorById(input.seniorId)
+      : await getSeniorForUser(session);
+    if (!senior) throw new Error("Create a senior profile before requesting a visit.");
+    const circle = await listCareCircle(senior.id);
+    assertCanRequest(session, senior, circle);
+
+    const kind = input.professionalKind === PROFESSIONAL_KIND.PRACTITIONER
+      ? PROFESSIONAL_KIND.PRACTITIONER
+      : PROFESSIONAL_KIND.CAREGIVER;
+    const professional = findProfessionalMember(
+      circle,
+      input.caregiverId || input.practitionerId || input.caregiverEmail,
+      kind,
+    );
+    if (!professional) {
+      throw new Error(kind === PROFESSIONAL_KIND.PRACTITIONER
+        ? "Choose a health practitioner on this circle."
+        : "Choose a caregiver on this circle.");
+    }
+    await assertProfessionalEligible(professional);
+
+    const window = windowInstants(
+      input.date,
+      input.startTime,
+      input.endTime,
+      input.timeZone || professional.timeZone || session?.timeZone,
+    );
+    if (!window) throw new Error("Choose a valid date and time.");
+    const familyId = senior.familyId || senior.ownerId || session.familyId || session.id;
+    const assignment = await shiftAssignmentForMember(professional, familyId);
+    const result = await callCloudFunction("saveCareShift", {
+      familyId,
+      seniorId: senior.id,
+      startAtMs: window.startsAt,
+      endAtMs: window.endsAt,
+      caregiverId: assignment.caregiverId,
+      professionalId: assignment.professionalId,
+      professionalRole: assignment.professionalRole,
+      professionalDisplayName: assignment.professionalDisplayName,
+      careLocation: String(input.careLocation || ""),
+      careInstructions: String(input.careInstructions || ""),
+      tasks: Array.isArray(input.tasks) ? input.tasks : [],
+      recurrence: input.recurrence || "none",
+      status: "requested",
+    }, { fallback: "That visit could not be requested." });
+    const saved = await readShiftByPath(senior.id, result.shiftId);
     trackProductEvent(PRODUCT_EVENTS.SCHEDULE_CREATED, {
       dedupeKey: `schedule_created:${saved.id}`,
       visitId: saved.id,
@@ -667,7 +1031,16 @@ export async function requestScheduleVisit(input, session = getSession()) {
 }
 
 export async function acceptScheduleVisit(visitId, session = getSession()) {
-  if (usesLiveAuth()) return liveVisit("acceptScheduleVisit", { visitId });
+  if (usesLiveAuth()) {
+    const visit = await requireVisit(visitId);
+    await callCloudFunction("respondToCareShift", {
+      familyId: visit.familyId,
+      seniorId: visit.seniorId,
+      shiftId: visitId,
+      action: "accept",
+    }, { fallback: "That visit could not be accepted." });
+    return readShiftByPath(visit.seniorId, visitId);
+  }
   const visit = await requireVisit(visitId);
   assertAssignedCaregiver(visit, session);
   await assertProfessionalEligible(session);
@@ -694,7 +1067,16 @@ export async function acceptScheduleVisit(visitId, session = getSession()) {
 }
 
 export async function declineScheduleVisit(visitId, reason = "", session = getSession()) {
-  if (usesLiveAuth()) return liveVisit("declineScheduleVisit", { visitId, reason });
+  if (usesLiveAuth()) {
+    const visit = await requireVisit(visitId);
+    await callCloudFunction("respondToCareShift", {
+      familyId: visit.familyId,
+      seniorId: visit.seniorId,
+      shiftId: visitId,
+      action: "decline",
+    }, { fallback: "That visit could not be declined." });
+    return readShiftByPath(visit.seniorId, visitId);
+  }
   const visit = await requireVisit(visitId);
   assertAssignedCaregiver(visit, session);
   if (visit.status !== VISIT_STATUS.REQUESTED) {
@@ -720,7 +1102,24 @@ export async function declineScheduleVisit(visitId, reason = "", session = getSe
 }
 
 export async function cancelScheduleVisit(visitId, session = getSession()) {
-  if (usesLiveAuth()) return liveVisit("cancelScheduleVisit", { visitId });
+  if (usesLiveAuth()) {
+    const visit = await requireVisit(visitId);
+    const senior = await getSeniorForUser(session);
+    const circle = senior ? await listCareCircle(senior.id) : [];
+    const assigned = matchesCaregiver(visit, session);
+    if (!assigned) assertCanRequest(session, senior, circle);
+    if (![VISIT_STATUS.REQUESTED, VISIT_STATUS.ACCEPTED].includes(visit.status)) {
+      throw new Error("That visit can no longer be cancelled.");
+    }
+    const sdk = getFirestoreSdk();
+    await writeShiftFields(visit.seniorId, visitId, {
+      status: VISIT_STATUS.CANCELLED,
+      statusUpdatedBy: session.id,
+      statusUpdatedAt: sdk.serverTimestamp(),
+      updatedAt: sdk.serverTimestamp(),
+    });
+    return readShiftByPath(visit.seniorId, visitId);
+  }
   const visit = await requireVisit(visitId);
   const senior = await getSeniorForUser(session);
   const circle = senior ? await listCareCircle(senior.id) : [];
@@ -752,7 +1151,26 @@ export async function cancelScheduleVisit(visitId, session = getSession()) {
 
 export async function checkInVisit(visitId, session = getSession()) {
   if (usesLiveAuth()) {
-    const next = await liveVisit("checkInVisit", { visitId });
+    const visit = await requireVisit(visitId);
+    assertAssignedCaregiver(visit, session);
+    if (visit.status !== VISIT_STATUS.ACCEPTED) {
+      throw new Error("Accept the visit before checking in.");
+    }
+    if (visit.date !== civilDateInZone(Date.now(), visit.timeZone || session?.timeZone)) {
+      throw new Error("Check in on the day of the visit.");
+    }
+    const sdk = getFirestoreSdk();
+    const checkInLocation = await visitLocation();
+    await writeShiftFields(visit.seniorId, visitId, {
+      checkInAt: sdk.Timestamp.fromDate(new Date()),
+      checkInLocation,
+      checkInBy: session.id,
+      status: VISIT_STATUS.CHECKED_IN,
+      statusUpdatedBy: session.id,
+      statusUpdatedAt: sdk.serverTimestamp(),
+      updatedAt: sdk.serverTimestamp(),
+    });
+    const next = await readShiftByPath(visit.seniorId, visitId);
     await syncPresence(next, AVAILABILITY.ON_DUTY);
     await logVisitActivity(next, {
       kind: CARE_HISTORY_KINDS.CHECK_IN,
@@ -789,7 +1207,32 @@ export async function checkInVisit(visitId, session = getSession()) {
 
 export async function checkOutVisit(visitId, note = "", session = getSession()) {
   if (usesLiveAuth()) {
-    const next = await liveVisit("checkOutVisit", { visitId, note });
+    const visit = await requireVisit(visitId);
+    assertAssignedCaregiver(visit, session);
+    if (visit.status !== VISIT_STATUS.CHECKED_IN) {
+      throw new Error("Check in before you check out.");
+    }
+    const sdk = getFirestoreSdk();
+    const checkedOutAt = new Date();
+    const checkedInMs = Date.parse(visit.checkedInAt || "") || checkedOutAt.getTime();
+    const durationMinutes = Math.max(0, Math.round((checkedOutAt.getTime() - checkedInMs) / 60000));
+    const checkOutLocation = await visitLocation();
+    await writeShiftFields(visit.seniorId, visitId, {
+      checkOutAt: sdk.Timestamp.fromDate(checkedOutAt),
+      checkOutLocation,
+      checkOutBy: session.id,
+      completedTasks: [],
+      visitDurationMinutes: durationMinutes,
+      status: VISIT_STATUS.CHECKED_OUT,
+      statusUpdatedBy: session.id,
+      statusUpdatedAt: sdk.serverTimestamp(),
+      updatedAt: sdk.serverTimestamp(),
+    });
+    const body = String(note || "").trim();
+    if (body) {
+      await writeVisitReport(visit, { body }, session, { note: true });
+    }
+    const next = await readShiftByPath(visit.seniorId, visitId);
     await syncPresence(next, AVAILABILITY.AVAILABLE);
     await logVisitActivity(next, {
       kind: CARE_HISTORY_KINDS.CHECK_OUT,
@@ -798,6 +1241,16 @@ export async function checkOutVisit(visitId, note = "", session = getSession()) 
       sourceId: `${next.id}:check_out`,
       occurredAt: next.checkedOutAt,
     }, session);
+    if (body) {
+      await logVisitActivity(next, {
+        kind: CARE_HISTORY_KINDS.VISIT_NOTE,
+        type: ACTIVITY_TYPES.CARE,
+        title: "Visit note added",
+        body,
+        sourceId: `${next.id}:note:checkout`,
+        occurredAt: next.checkedOutAt,
+      }, session);
+    }
     trackProductEvent(PRODUCT_EVENTS.VISIT_COMPLETED, {
       dedupeKey: `visit_completed:${next.id}`,
       visitId: next.id,
@@ -858,15 +1311,61 @@ export async function checkOutVisit(visitId, note = "", session = getSession()) 
 
 export async function addVisitNote(visitId, body, session = getSession()) {
   if (usesLiveAuth()) {
-    const saved = await liveVisit("addVisitNote", { visitId, body });
-    const note = saved.notes.at(-1);
+    const visit = await requireVisit(visitId);
+    const text = String(body || "").trim();
+    if (!text) throw new Error("Write a visit note.");
+    const assigned = matchesCaregiver(visit, session);
+    if (!assigned) {
+      const senior = await getSeniorForUser(session);
+      const circle = senior ? await listCareCircle(senior.id) : [];
+      assertCanRequest(session, senior, circle);
+    }
+    if (![VISIT_STATUS.ACCEPTED, VISIT_STATUS.CHECKED_IN, VISIT_STATUS.CHECKED_OUT].includes(visit.status)) {
+      throw new Error("Notes can be added after the visit is accepted.");
+    }
+    const sdk = getFirestoreSdk();
+    const snap = await sdk.getDocs(sdk.query(
+      visitReportsCol(visit.seniorId),
+      sdk.where("shiftId", "==", visit.id),
+      sdk.limit(1),
+    ));
+    const existing = snap.docs[0];
+    let saved = null;
+    if (existing) {
+      const current = existing.data() || {};
+      const prior = String(current.notes || "").trim();
+      const notes = prior ? `${prior}\n${text}` : text;
+      const update = {
+        notes,
+        updatedAt: sdk.serverTimestamp(),
+      };
+      const notesLog = Array.isArray(current.notesLog) ? [...current.notesLog] : null;
+      if (notesLog) {
+        notesLog.push({
+          id: newId("note"),
+          body: text,
+          author: session?.displayName || "",
+          authorId: session?.id || "",
+          createdAt: nowIso(),
+        });
+        update.notesLog = notesLog;
+      }
+      await sdk.updateDoc(existing.ref, update);
+      saved = {
+        ...visit,
+        report: reportFromDoc({ ...current, notes, ...(notesLog ? { notesLog } : {}) }),
+      };
+    } else {
+      await writeVisitReport(visit, { body: text }, session, { note: true });
+      saved = { ...visit, report: reportFromInput(visit, { summary: text }, session) };
+    }
     await logVisitActivity(saved, {
       kind: CARE_HISTORY_KINDS.VISIT_NOTE,
       type: ACTIVITY_TYPES.CARE,
       title: "Visit note added",
-      body: String(body || "").trim(),
-      sourceId: `${saved.id}:note:${note?.id || "note"}`,
-      occurredAt: note?.createdAt || nowIso(),
+      body: text,
+      sourceId: `${saved.id}:note:note`,
+      occurredAt: nowIso(),
     }, session);
     return saved;
   }
@@ -909,14 +1408,23 @@ export async function addVisitNote(visitId, body, session = getSession()) {
 
 export async function submitVisitReport(visitId, input, session = getSession()) {
   if (usesLiveAuth()) {
-    const saved = await liveVisit("submitVisitReport", { visitId, ...input });
+    const visit = await requireVisit(visitId);
+    assertAssignedCaregiver(visit, session);
+    if (visit.status !== VISIT_STATUS.CHECKED_OUT && visit.status !== VISIT_STATUS.CHECKED_IN) {
+      throw new Error("Write the visit report after you have been with them.");
+    }
+    const summary = String(input.summary || "").trim();
+    if (!summary) throw new Error("Add a short summary for the family.");
+    const report = reportFromInput(visit, input, session);
+    await writeVisitReport(visit, input, session);
+    const saved = { ...visit, report };
     await logVisitActivity(saved, {
       kind: CARE_HISTORY_KINDS.VISIT_REPORT,
       type: ACTIVITY_TYPES.CARE,
       title: "Visit report submitted",
-      body: saved.report?.summary || "",
+      body: summary,
       sourceId: `${saved.id}:report`,
-      occurredAt: saved.report?.submittedAt || nowIso(),
+      occurredAt: report.submittedAt,
     }, session);
     return saved;
   }
@@ -963,7 +1471,43 @@ export async function submitVisitReport(visitId, input, session = getSession()) 
 
 export async function modifyScheduleVisit(visitId, input, session = getSession()) {
   if (usesLiveAuth()) {
-    return liveVisit("modifyScheduleVisit", { visitId, ...input });
+    const visit = await requireVisit(visitId);
+    const raw = await readShiftRaw(visit.seniorId, visitId);
+    const assigned = matchesCaregiver(visit, session);
+    const practitionerOwn = assigned
+      && kindOf(visit) === PROFESSIONAL_KIND.PRACTITIONER
+      && session?.role === ROLES.HEALTH_PRACTITIONER;
+    if (!practitionerOwn) {
+      const senior = await getSeniorForUser(session);
+      const circle = senior ? await listCareCircle(senior.id) : [];
+      assertCanRequest(session, senior, circle);
+    }
+    if (![VISIT_STATUS.REQUESTED, VISIT_STATUS.ACCEPTED].includes(visit.status)) {
+      throw new Error("Only upcoming visits can be changed. Extend a visit that is already under way.");
+    }
+    const window = windowInstants(
+      input.date || visit.date,
+      input.startTime || visit.startTime,
+      input.endTime || visit.endTime,
+      visit.timeZone,
+    );
+    if (!window) throw new Error("Choose a valid date and time.");
+    await callCloudFunction("saveCareShift", {
+      familyId: raw?.familyId || visit.familyId,
+      seniorId: visit.seniorId,
+      shiftId: visitId,
+      startAtMs: window.startsAt,
+      endAtMs: window.endsAt,
+      caregiverId: raw?.caregiverId ?? null,
+      professionalId: raw?.professionalId ?? null,
+      professionalRole: raw?.professionalRole ?? null,
+      professionalDisplayName: raw?.caregiverDisplayName ?? null,
+      careLocation: raw?.careLocation || "",
+      careInstructions: raw?.careInstructions || "",
+      tasks: Array.isArray(raw?.tasks) ? raw.tasks : [],
+      recurrence: raw?.recurrence || "none",
+    }, { fallback: "That visit could not be updated." });
+    return readShiftByPath(visit.seniorId, visitId);
   }
   const visit = await requireVisit(visitId);
   const assigned = matchesCaregiver(visit, session);
@@ -1012,7 +1556,43 @@ export async function modifyScheduleVisit(visitId, input, session = getSession()
 
 export async function extendScheduleVisit(visitId, extraMinutes, session = getSession()) {
   if (usesLiveAuth()) {
-    return liveVisit("extendScheduleVisit", { visitId, minutes: extraMinutes });
+    const visit = await requireVisit(visitId);
+    const raw = await readShiftRaw(visit.seniorId, visitId);
+    const minutes = Number(extraMinutes);
+    if (!Number.isFinite(minutes) || minutes < 15) {
+      throw new Error("Extend the visit by at least 15 minutes.");
+    }
+    const assigned = matchesCaregiver(visit, session);
+    if (!assigned) {
+      const senior = await getSeniorForUser(session);
+      const circle = senior ? await listCareCircle(senior.id) : [];
+      assertCanRequest(session, senior, circle);
+    }
+    if (![VISIT_STATUS.ACCEPTED, VISIT_STATUS.CHECKED_IN].includes(visit.status)) {
+      throw new Error("Only an accepted or in-progress visit can be extended.");
+    }
+    const endTime = addMinutesToTime(visit.endTime, minutes);
+    if (toMinutes(endTime) <= toMinutes(visit.endTime) || toMinutes(endTime) > 24 * 60 - 1) {
+      throw new Error("That extension would run past midnight. Split it into a new visit instead.");
+    }
+    const window = windowInstants(visit.date, visit.startTime, endTime, visit.timeZone);
+    if (!window) throw new Error("Choose a valid date and time.");
+    await callCloudFunction("saveCareShift", {
+      familyId: raw?.familyId || visit.familyId,
+      seniorId: visit.seniorId,
+      shiftId: visitId,
+      startAtMs: window.startsAt,
+      endAtMs: window.endsAt,
+      caregiverId: raw?.caregiverId ?? null,
+      professionalId: raw?.professionalId ?? null,
+      professionalRole: raw?.professionalRole ?? null,
+      professionalDisplayName: raw?.caregiverDisplayName ?? null,
+      careLocation: raw?.careLocation || "",
+      careInstructions: raw?.careInstructions || "",
+      tasks: Array.isArray(raw?.tasks) ? raw.tasks : [],
+      recurrence: raw?.recurrence || "none",
+    }, { fallback: "That visit could not be extended." });
+    return readShiftByPath(visit.seniorId, visitId);
   }
   const visit = await requireVisit(visitId);
   const minutes = Number(extraMinutes);

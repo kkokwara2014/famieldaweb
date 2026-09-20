@@ -46,7 +46,10 @@ const stripeCheckoutOrigins = defineString("STRIPE_CHECKOUT_ORIGINS", {
 
 const REGION = "us-central1";
 const USERS = "users";
-const SUBSCRIPTIONS = "subscriptions";
+const FAMILIES = "families";
+const FAMILY_MEMBERS = "members";
+const FAMILY_SUBSCRIPTION_DOC = "current";
+const FAMILY_PAYMENTS = "payments";
 const STRIPE_CUSTOMERS = "stripeCustomers";
 const STRIPE_EVENTS = "stripeEvents";
 const PLUS_PLAN = "plus";
@@ -277,6 +280,20 @@ async function findUidForCustomer(customerId) {
   return "";
 }
 
+async function resolveFamilyId(uid) {
+  if (!uid) return "";
+  try {
+    const owned = await db().collection(FAMILIES).where("createdBy", "==", uid).limit(1).get();
+    if (!owned.empty) return owned.docs[0].id;
+    const member = await db().collectionGroup(FAMILY_MEMBERS).where("userId", "==", uid).limit(1).get();
+    const parent = member.docs[0]?.ref?.parent?.parent;
+    return parent ? parent.id : "";
+  } catch (error) {
+    logger.warn("Could not resolve the family for billing.", { uid, message: error.message });
+    return "";
+  }
+}
+
 async function rememberCustomer(customerId, uid, email) {
   if (!customerId || !uid) return;
   await db().doc(`${STRIPE_CUSTOMERS}/${customerId}`).set({
@@ -349,10 +366,15 @@ async function applySubscription(uid, subscription, customerId = "") {
     updatedAt: now,
   };
 
+  const familyId = await resolveFamilyId(uid);
+
   const billing = {
     uid,
+    familyId: familyId || null,
+    billingUserId: uid,
     plan,
     status,
+    plusEntitled: ACTIVE_STATUSES.has(status),
     stripeCustomerId: customer || null,
     stripeSubscriptionId: subscription.id,
     stripePriceId: priceId || null,
@@ -365,7 +387,14 @@ async function applySubscription(uid, subscription, customerId = "") {
 
   const batch = db().batch();
   batch.set(db().doc(`${USERS}/${uid}`), userPatch, { merge: true });
-  batch.set(db().doc(`${SUBSCRIPTIONS}/${uid}`), billing, { merge: true });
+  if (familyId) {
+    batch.set(db().doc(`${FAMILIES}/${familyId}/subscription/${FAMILY_SUBSCRIPTION_DOC}`), billing, { merge: true });
+  } else {
+    logger.warn("No family membership found; subscription written only to the user mirror.", {
+      uid,
+      subscriptionId: subscription.id,
+    });
+  }
   await batch.commit();
   await rememberCustomer(customer, uid, "");
   await analytics.trackBillingChange({
@@ -388,6 +417,45 @@ async function applySubscription(uid, subscription, customerId = "") {
   });
 
   return { plan, status };
+}
+
+function invoicePriceId(invoice) {
+  const line = invoice?.lines?.data?.[0];
+  const price = line?.pricing?.price_details?.price || line?.price;
+  if (!price) return "";
+  return typeof price === "string" ? price : (price.id || "");
+}
+
+async function syncPaymentFromInvoice(familyId, invoice) {
+  if (!familyId || !invoice?.id) return;
+  const priceId = invoicePriceId(invoice);
+  const plan = plusPriceIds().has(priceId) ? PLUS_PLAN : FREE_PLAN;
+  const amountCents = Number(invoice.amount_paid ?? invoice.amount_due ?? invoice.total ?? 0) || 0;
+  const amountDue = Number(invoice.amount_due ?? invoice.total ?? 0) || 0;
+  const paidAt = invoice.status_transitions?.paid_at
+    ? new Date(Number(invoice.status_transitions.paid_at) * 1000)
+    : null;
+  const record = {
+    familyId,
+    stripeInvoiceId: invoice.id,
+    stripeSubscriptionId: invoiceSubscriptionId(invoice) || null,
+    amountCents,
+    amountPaid: amountCents,
+    amountDue,
+    currency: String(invoice.currency || "usd"),
+    status: invoice.status || "open",
+    plan,
+    description: invoice.description || invoice.lines?.data?.[0]?.description || "Family subscription",
+    hostedInvoiceUrl: invoice.hosted_invoice_url || null,
+    invoiceUrl: invoice.hosted_invoice_url || null,
+    receiptUrl: invoice.hosted_invoice_url || invoice.invoice_pdf || null,
+    invoicePdf: invoice.invoice_pdf || null,
+    invoicePdfUrl: invoice.invoice_pdf || null,
+    paidAt,
+    createdAt: invoice.created ? new Date(Number(invoice.created) * 1000) : new Date(),
+    updatedAt: new Date(),
+  };
+  await db().doc(`${FAMILIES}/${familyId}/${FAMILY_PAYMENTS}/${invoice.id}`).set(record, { merge: true });
 }
 
 async function famieldaPortalConfigurationId(stripe) {
@@ -862,12 +930,17 @@ async function handleStripeEvent(event, stripe) {
         || invoice.parent?.subscription_details?.metadata?.firebaseUid
         || invoice.metadata?.firebaseUid
         || "";
+      const ownerUid = uid || await findUidForCustomer(idOf(invoice.customer));
       if (subscriptionId) {
         await syncSubscriptionById(
           stripe,
           subscriptionId,
-          uid
+          ownerUid
         );
+      }
+      const familyId = ownerUid ? await resolveFamilyId(ownerUid) : "";
+      if (familyId) {
+        await syncPaymentFromInvoice(familyId, invoice);
       }
       if (event.type === "invoice.payment_failed") {
         const monitoring = require("./monitoring");
@@ -876,7 +949,7 @@ async function handleStripeEvent(event, stripe) {
           status: invoice.status || "open",
           amountCents: invoice.amount_due || invoice.amount_remaining || 0,
           currency: String(invoice.currency || "usd").toUpperCase(),
-          userId: uid,
+          userId: ownerUid,
           code: event.type,
         });
         logger.warn("Stripe invoice payment failed.", {

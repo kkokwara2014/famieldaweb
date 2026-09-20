@@ -1,19 +1,26 @@
 rules_version = '2';
 
-// Famielda Security — Module 29.
-// Clients never enforce access. These rules, Storage rules, and Cloud Functions do.
+// Famielda — unified Firestore rules for the mobile + web apps.
+// Canonical schema: see famieldaweb/SCHEMA_ALIGNMENT.md.
+// This file is the single source of truth and is deployed ONLY from the web
+// repo (famielda/firebase.json must not contain a "firestore" block).
+//
+// Design: entities (users, families, seniors) are top-level; senior-scoped
+// care data lives in subcollections under seniors/{seniorId}. The senior's
+// circleMembers/{uid} document is the access boundary. Derived fields
+// (seniors.memberIds, usage counters, rating aggregates) are server-written.
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- identity
+
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isSelf(userId) {
+    function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
-    }
-
-    function emailOf() {
-      return request.auth.token.email;
     }
 
     function hasUserDoc() {
@@ -25,161 +32,1162 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    function userRole() {
-      return userDoc().role;
+    function isPlatformAdmin() {
+      return hasUserDoc() && userDoc().role == 'admin';
     }
 
-    function userStatus() {
-      return userDoc().status;
+    function isProfessionalAppRole() {
+      return hasUserDoc()
+        && userDoc().role in ['caregiver', 'healthPractitioner', 'health_practitioner'];
     }
 
-    function isSuspended() {
-      return hasUserDoc() && 'status' in userDoc() && userStatus() == 'suspended';
+    function isFamilyCoordinatorUser() {
+      return isSignedIn() && !isProfessionalAppRole();
     }
 
-    function isActiveUser() {
-      return isSignedIn() && !isSuspended();
+    function authEmail() {
+      return ('email' in request.auth.token && request.auth.token.email is string)
+        ? request.auth.token.email.lower()
+        : '';
     }
 
-    function isAdmin() {
-      return isActiveUser()
-        && hasUserDoc()
-        && userRole() == 'admin';
+    function validUserRole(value) {
+      return value in [
+        'unassigned',
+        'family_member',
+        'familyMember',
+        'senior',
+        'caregiver',
+        'health_practitioner',
+        'healthPractitioner',
+        'admin'
+      ];
     }
 
-    function isFamilyRole() {
-      return hasUserDoc() && userRole() == 'family';
+    function validUserStatus(value) {
+      return value in ['active', 'inactive', 'suspended', 'pending'];
     }
 
-    function isPractitionerRole() {
-      return hasUserDoc() && userRole() == 'health_practitioner';
+    function professionalTypeMatchesRole(role, professionalType) {
+      return role == 'caregiver'
+        ? professionalType in ['cna', 'cmt', 'other_caregiver']
+        : (role in ['health_practitioner', 'healthPractitioner']
+          && professionalType in ['nurse', 'physiotherapist', 'md', 'other_health_practitioner']);
     }
 
-    function isCaregiverRole() {
-      return hasUserDoc() && userRole() == 'caregiver';
+    function validLocation(value) {
+      return value is map
+        && (!('city' in value) || value.city is string)
+        && (!('state' in value) || value.state is string)
+        && (!('country' in value) || value.country is string)
+        && (!('latitude' in value) || value.latitude is number)
+        && (!('longitude' in value) || value.longitude is number);
     }
+
+    function validNotificationPreferences(value) {
+      return value is map
+        && (!('emailEnabled' in value) || value.emailEnabled is bool)
+        && (!('pushEnabled' in value) || value.pushEnabled is bool)
+        && (!('smsEnabled' in value) || value.smsEnabled is bool)
+        && (!('careUpdates' in value) || value.careUpdates is bool)
+        && (!('familyActivity' in value) || value.familyActivity is bool)
+        && (!('reminders' in value) || value.reminders is bool)
+        && (!('marketing' in value) || value.marketing is bool)
+        && (!('generalNotifications' in value) || value.generalNotifications is bool)
+        && (!('careCircleNotifications' in value) || value.careCircleNotifications is bool)
+        && (!('caregiverNotifications' in value) || value.caregiverNotifications is bool)
+        && (!('appointmentReminders' in value) || value.appointmentReminders is bool)
+        && (!('medicationReminders' in value) || value.medicationReminders is bool)
+        && (!('importantAlerts' in value) || value.importantAlerts is bool);
+    }
+
+    function validLiveAvailability(value) {
+      return value in ['available', 'unavailable', 'working', 'scheduled'];
+    }
+
+    function userIsPlusEntitled(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        && get(/databases/$(database)/documents/users/$(userId)).data.plan == 'plus'
+        && get(/databases/$(database)/documents/users/$(userId)).data.subscriptionStatus in ['active', 'trialing'];
+    }
+
+    // Advanced (SMS) notifications are a Plus entitlement. Free users may keep
+    // or clear the flag but cannot turn it on.
+    function mayEnableSmsNotifications(userId) {
+      return isOwner(userId) && userIsPlusEntitled(userId);
+    }
+
+    function validVerificationStatus(value) {
+      return value in ['pending', 'underReview', 'under_review', 'verified', 'rejected', 'suspended'];
+    }
+
+    // Owners may only move their own verification into the review queue.
+    function validOwnerVerificationStatus(value) {
+      return value in ['pending', 'underReview', 'under_review'];
+    }
+
+    // Embedded verification map on users/{uid}. `ownerOnly` narrows the status
+    // set to what a self-service owner is allowed to write.
+    function validProfessionalVerification(data, ownerOnly) {
+      return data.keys().hasAll(['status'])
+        && data.status is string
+        && (ownerOnly
+          ? validOwnerVerificationStatus(data.status)
+          : validVerificationStatus(data.status))
+        && (!('notes' in data) || data.notes is string)
+        && (!('submittedAt' in data) || data.submittedAt is timestamp)
+        && (!('reviewedAt' in data) || data.reviewedAt is timestamp)
+        && (!('reviewedBy' in data) || data.reviewedBy is string)
+        && (!('updatedAt' in data) || data.updatedAt is timestamp)
+        && (!('documents' in data)
+          || (data.documents is list && data.documents.size() <= 12));
+    }
+
+    // ------------------------------------------------------------------- family
+
+    function isFamilyMember(familyId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid));
+    }
+
+    function isFamilyAdmin(familyId) {
+      return isFamilyMember(familyId)
+        && get(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function familyDoc(familyId) {
+      return get(/databases/$(database)/documents/families/$(familyId)).data;
+    }
+
+    function familyIsPlus(familyId) {
+      return exists(/databases/$(database)/documents/families/$(familyId)/subscription/current)
+        && get(/databases/$(database)/documents/families/$(familyId)/subscription/current).data.status in ['active', 'trialing'];
+    }
+
+    function familyUsage(familyId) {
+      return get(/databases/$(database)/documents/families/$(familyId)/usage/current).data;
+    }
+
+    function canAddCaregiverOnPlan(familyId) {
+      return familyIsPlus(familyId)
+        || !exists(/databases/$(database)/documents/families/$(familyId)/usage/current)
+        || !('caregiverCount' in familyUsage(familyId))
+        || familyUsage(familyId).caregiverCount < 1;
+    }
+
+    function canAddHealthPractitionerOnPlan(familyId) {
+      return familyIsPlus(familyId)
+        || !exists(/databases/$(database)/documents/families/$(familyId)/usage/current)
+        || !('healthPractitionerCount' in familyUsage(familyId))
+        || familyUsage(familyId).healthPractitionerCount < 1;
+    }
+
+    function canAddFamilyMemberOnPlan(familyId) {
+      return familyIsPlus(familyId)
+        || !exists(/databases/$(database)/documents/families/$(familyId)/usage/current)
+        || !('familyMemberCount' in familyUsage(familyId))
+        || familyUsage(familyId).familyMemberCount < 2;
+    }
+
+    function familyAllowsCirclePermission(familyId, permission) {
+      return (permission != 'caregiver' || canAddCaregiverOnPlan(familyId))
+        && (permission != 'healthPractitioner' || canAddHealthPractitionerOnPlan(familyId))
+        && (permission != 'owner' || canAddFamilyMemberOnPlan(familyId))
+        && (permission != 'familyMember' || canAddFamilyMemberOnPlan(familyId));
+    }
+
+    function validCareStatus(value) {
+      return value in ['pending', 'invited', 'active', 'onLeave', 'inactive'];
+    }
+
+    function careCircleInviteDoc(inviteId) {
+      return get(/databases/$(database)/documents/careCircleInvites/$(inviteId));
+    }
+
+    // Invitee check for the retained family caregiver roster. Uses the
+    // canonical careCircleInvites collection (mobile legacy careInvitations).
+    function isPendingCareCircleInvitee(inviteId) {
+      return isSignedIn()
+        && 'email' in request.auth.token
+        && exists(/databases/$(database)/documents/careCircleInvites/$(inviteId))
+        && careCircleInviteDoc(inviteId).data.email == authEmail()
+        && careCircleInviteDoc(inviteId).data.status == 'pending'
+        && (!('expiresAt' in careCircleInviteDoc(inviteId).data)
+          || careCircleInviteDoc(inviteId).data.expiresAt > request.time);
+    }
+
+    // ------------------------------------------------------------ senior + circle
 
     function seniorPath(seniorId) {
       return /databases/$(database)/documents/seniors/$(seniorId);
-    }
-
-    function seniorExists(seniorId) {
-      return exists(seniorPath(seniorId));
     }
 
     function seniorDoc(seniorId) {
       return get(seniorPath(seniorId)).data;
     }
 
-    function isSeniorMemberOf(seniorId) {
-      return isActiveUser()
-        && seniorExists(seniorId)
+    function seniorFamilyId(seniorId) {
+      return get(seniorPath(seniorId)).data.familyId;
+    }
+
+    function memberPath(seniorId, uid) {
+      return /databases/$(database)/documents/seniors/$(seniorId)/circleMembers/$(uid);
+    }
+
+    function memberDoc(seniorId, uid) {
+      return get(memberPath(seniorId, uid)).data;
+    }
+
+    function isActiveCircleMember(seniorId) {
+      return isSignedIn()
+        && exists(memberPath(seniorId, request.auth.uid))
+        && memberDoc(seniorId, request.auth.uid).status == 'active';
+    }
+
+    function circlePermission(seniorId) {
+      return memberDoc(seniorId, request.auth.uid).permission;
+    }
+
+    function isCircleOwner(seniorId) {
+      return isActiveCircleMember(seniorId) && circlePermission(seniorId) == 'owner';
+    }
+
+    function canViewFullSenior(seniorId) {
+      return isPlatformAdmin()
+        || (isActiveCircleMember(seniorId) && circlePermission(seniorId) in ['owner', 'familyMember']);
+    }
+
+    function canViewCareSummary(seniorId) {
+      return canViewFullSenior(seniorId)
+        || (isActiveCircleMember(seniorId) && circlePermission(seniorId) in ['caregiver', 'healthPractitioner']);
+    }
+
+    function canEditSenior(seniorId) {
+      return isPlatformAdmin()
+        || (isActiveCircleMember(seniorId) && circlePermission(seniorId) in ['owner', 'familyMember']);
+    }
+
+    function canManageCircle(seniorId) {
+      return isActiveCircleMember(seniorId) && circlePermission(seniorId) in ['owner', 'familyMember'];
+    }
+
+    function canInviteToSenior(seniorId) {
+      return canManageCircle(seniorId)
+        || (exists(seniorPath(seniorId)) && isFamilyAdmin(seniorFamilyId(seniorId)));
+    }
+
+    function isLinkedSeniorUser(seniorId) {
+      return isSignedIn() && seniorDoc(seniorId).linkedUserId == request.auth.uid;
+    }
+
+    function isProfessionalCirclePermission(value) {
+      return value in ['caregiver', 'healthPractitioner'];
+    }
+
+    function validCirclePermission(value) {
+      return value in ['owner', 'familyMember', 'caregiver', 'healthPractitioner', 'emergencyContact'];
+    }
+
+    function validCircleMemberStatus(value) {
+      return value in ['active', 'invited', 'declined', 'removed', 'archived'];
+    }
+
+    function professionalFamilyIds(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        && 'activeProfessionalFamilyIds' in get(/databases/$(database)/documents/users/$(userId)).data
+        && get(/databases/$(database)/documents/users/$(userId)).data.activeProfessionalFamilyIds is list
+        ? get(/databases/$(database)/documents/users/$(userId)).data.activeProfessionalFamilyIds
+        : [];
+    }
+
+    function professionalCanJoinFamily(userId, familyId) {
+      return (exists(/databases/$(database)/documents/users/$(userId))
+          && get(/databases/$(database)/documents/users/$(userId)).data.plan == 'plus'
+          && get(/databases/$(database)/documents/users/$(userId)).data.subscriptionStatus in ['active', 'trialing'])
+        || familyId in professionalFamilyIds(userId)
+        || professionalFamilyIds(userId).size() < 1;
+    }
+
+    function validCareShiftStatus(value) {
+      return value in [
+        'requested', 'accepted', 'declined', 'checked_in', 'checked_out',
+        'cancelled', 'expired', 'pending', 'scheduled', 'inProgress',
+        'completed'
+      ];
+    }
+
+    function caregiverDoc(familyId, caregiverId) {
+      return get(/databases/$(database)/documents/families/$(familyId)/caregivers/$(caregiverId)).data;
+    }
+
+    // A caregiver roster profile belongs to the signed-in user.
+    function isAssignedCaregiverUser(familyId, caregiverId) {
+      return isSignedIn()
+        && caregiverId is string
+        && caregiverId.size() > 0
+        && exists(/databases/$(database)/documents/families/$(familyId)/caregivers/$(caregiverId))
+        && caregiverDoc(familyId, caregiverId).userId == request.auth.uid;
+    }
+
+    function shiftPath(seniorId, shiftId) {
+      return /databases/$(database)/documents/seniors/$(seniorId)/scheduleVisits/$(shiftId);
+    }
+
+    function shiftDoc(seniorId, shiftId) {
+      return get(shiftPath(seniorId, shiftId)).data;
+    }
+
+    function isAssignedProfessionalOnShift(seniorId, shiftId) {
+      return isSignedIn()
+        && exists(shiftPath(seniorId, shiftId))
+        && 'professionalId' in shiftDoc(seniorId, shiftId)
+        && shiftDoc(seniorId, shiftId).professionalId == request.auth.uid
+        && isActiveCircleMember(seniorId)
+        && isProfessionalCirclePermission(circlePermission(seniorId));
+    }
+
+    // The caller is the assigned caregiver (mobile roster profile) or the
+    // assigned health practitioner for the referenced shift.
+    function isAssignedToShift(seniorId, shiftId) {
+      return isAssignedProfessionalOnShift(seniorId, shiftId)
+        || (exists(shiftPath(seniorId, shiftId))
+          && 'caregiverId' in shiftDoc(seniorId, shiftId)
+          && isAssignedCaregiverUser(
+            seniorFamilyId(seniorId),
+            shiftDoc(seniorId, shiftId).caregiverId));
+    }
+
+    function validVisitLocation(value) {
+      return value is map
+        && 'latitude' in value
+        && 'longitude' in value
+        && value.latitude is number
+        && value.longitude is number;
+    }
+
+    function validCareTaskStatus(value) {
+      return value in ['open', 'pending', 'inProgress', 'completed', 'skipped', 'missed'];
+    }
+
+    function validCareTaskPriority(value) {
+      return value in ['low', 'medium', 'high', 'urgent'];
+    }
+
+    function validCareTaskRecurrence(value) {
+      return value in ['none', 'once', 'daily', 'weekdays', 'weekly', 'monthly', 'as_needed'];
+    }
+
+    function validMedicationRoute(value) {
+      return value in ['oral', 'topical', 'injection', 'inhalation', 'sublingual', 'other'];
+    }
+
+    function validMedicationFrequency(value) {
+      return value in [
+        'once', 'daily', 'twice_daily', 'three_times', 'weekly', 'every_other', 'as_needed',
+        'onceDaily', 'twiceDaily', 'threeTimesDaily', 'fourTimesDaily', 'everyOtherDay', 'custom'
+      ];
+    }
+
+    function validMedicationDoseStatus(value) {
+      return value in ['scheduled', 'taken', 'missed', 'skipped', 'notRecorded'];
+    }
+
+    function validAppointmentStatus(value) {
+      return value in ['scheduled', 'confirmed', 'completed', 'cancelled', 'missed', 'rescheduled', 'upcoming'];
+    }
+
+    function validAppointmentAssignmentStatus(value) {
+      return value in ['pending', 'accepted', 'declined'];
+    }
+
+    function validAppointmentAssignment(data) {
+      return (!('assignmentStatus' in data) || validAppointmentAssignmentStatus(data.assignmentStatus))
+        && (!('durationMinutes' in data) || (data.durationMinutes is int && data.durationMinutes > 0))
+        && (!('assignmentStatus' in data)
+          || ('assignedUserId' in data && data.assignedUserId is string && data.assignedUserId.size() > 0));
+    }
+
+    function validAppointmentType(value) {
+      return value in [
+        'doctorVisit', 'specialist', 'dental', 'therapy', 'labWork', 'imaging',
+        'followUp', 'other'
+      ];
+    }
+
+    function validTransportation(value) {
+      return value in ['none', 'familyDriver', 'rideshare', 'medicalTransport', 'wheelchairAccessible', 'other'];
+    }
+
+    function validVitalType(value) {
+      return value in [
+        'bloodPressure', 'heartRate', 'temperature', 'oxygenSaturation',
+        'bloodGlucose', 'weight', 'painLevel', 'mood', 'sleep', 'foodIntake', 'fluidIntake'
+      ];
+    }
+
+    function canRecordVitals(seniorId) {
+      return canEditSenior(seniorId)
+        || (isActiveCircleMember(seniorId) && circlePermission(seniorId) in ['caregiver', 'healthPractitioner']);
+    }
+
+    function canRecordMedicationDose(seniorId) {
+      return canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+    }
+
+    function canUpdateAppointmentStatus(seniorId) {
+      return canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+    }
+
+    function canAccessCircleMessages(seniorId) {
+      return canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+    }
+
+    // Health practitioners are narrowed by professional type on three write
+    // paths (vitals, dose status, appointment status). Non-practitioners are
+    // never constrained by this.
+    function isHealthPractitionerAppUser() {
+      return hasUserDoc() && userDoc().role in ['health_practitioner', 'healthPractitioner'];
+    }
+
+    function currentProfessionalType() {
+      return (hasUserDoc() && 'professionalType' in userDoc()) ? userDoc().professionalType : '';
+    }
+
+    function healthPractitionerTypeIn(types) {
+      return isHealthPractitionerAppUser() && currentProfessionalType() in types;
+    }
+
+    // --------------------------------------------------------------- users
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isPlatformAdmin();
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasAll(['email', 'displayName', 'createdAt'])
+        && (!('role' in request.resource.data) || validUserRole(request.resource.data.role))
+        && (!('status' in request.resource.data) || validUserStatus(request.resource.data.status))
+        && (!('plan' in request.resource.data) || request.resource.data.plan == 'free')
+        && !('stripeCustomerId' in request.resource.data)
+        && !('stripeSubscriptionId' in request.resource.data);
+      allow update: if (isOwner(userId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'displayName', 'firstName', 'lastName', 'email', 'phone', 'phoneVerified',
+            'photoUrl', 'location', 'notificationPreferences', 'lastLoginAt', 'updatedAt',
+            'fcmTokens', 'liveAvailability', 'professionalProfile', 'discoverable',
+            'professionalVerification', 'role', 'professionalType'
+          ])
+          && (!('role' in request.resource.data) || validUserRole(request.resource.data.role))
+          && (!('professionalType' in request.resource.data)
+            || request.resource.data.professionalType == null
+            || professionalTypeMatchesRole(
+              request.resource.data.role,
+              request.resource.data.professionalType))
+          && (!('location' in request.resource.data) || validLocation(request.resource.data.location))
+          && (!('notificationPreferences' in request.resource.data)
+            || (validNotificationPreferences(request.resource.data.notificationPreferences)
+              && (!('smsEnabled' in request.resource.data.notificationPreferences)
+                || request.resource.data.notificationPreferences.smsEnabled != true
+                || (('notificationPreferences' in resource.data)
+                  && ('smsEnabled' in resource.data.notificationPreferences)
+                  && resource.data.notificationPreferences.smsEnabled == true)
+                || mayEnableSmsNotifications(userId))))
+          && (!('discoverable' in request.resource.data)
+            || request.resource.data.discoverable is bool)
+          && (!('liveAvailability' in request.resource.data)
+            || validLiveAvailability(request.resource.data.liveAvailability))
+          && (!('professionalVerification' in request.resource.data)
+            || validProfessionalVerification(
+              request.resource.data.professionalVerification,
+              true)))
+        || (isPlatformAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['role', 'status', 'updatedAt', 'professionalType', 'professionalVerification'])
+          && (!('role' in request.resource.data) || validUserRole(request.resource.data.role))
+          && (!('status' in request.resource.data) || validUserStatus(request.resource.data.status))
+          && (!('professionalVerification' in request.resource.data)
+            || validProfessionalVerification(
+              request.resource.data.professionalVerification,
+              false)));
+      allow delete: if isOwner(userId);
+
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow create: if false;
+        allow update: if isOwner(userId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'readAt'])
+          && request.resource.data.recipientUserId == resource.data.recipientUserId;
+        allow delete: if false;
+      }
+
+      match /devices/{deviceId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.keys().hasAll(['token', 'platform', 'updatedAt'])
+          && request.resource.data.token is string
+          && request.resource.data.token.size() > 0
+          && request.resource.data.platform in [
+            'android', 'ios', 'web', 'windows', 'macos', 'linux', 'other'
+          ];
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // ------------------------------------------------------------- families
+
+    match /families/{familyId} {
+      allow read: if isFamilyMember(familyId);
+      allow create: if isFamilyCoordinatorUser()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.keys().hasAll(['name', 'createdBy', 'createdAt']);
+      allow update: if isFamilyAdmin(familyId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'updatedAt']);
+      allow delete: if isFamilyAdmin(familyId);
+
+      match /members/{memberId} {
+        allow read: if isFamilyMember(familyId);
+        allow create: if isFamilyAdmin(familyId)
+          || (isSignedIn()
+            && memberId == request.auth.uid
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.role == 'admin'
+            && getAfter(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid);
+        allow update: if isFamilyAdmin(familyId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'updatedAt']);
+        allow delete: if isFamilyAdmin(familyId) || isOwner(memberId);
+      }
+
+      // Retained additive caregiver roster (mobile). Family members may read
+      // the roster; the caregiver may read/write their own profile. The
+      // invite-acceptance branches use canonical careCircleInvites.
+      match /caregivers/{caregiverId} {
+        allow read: if isFamilyMember(familyId)
+          || isPlatformAdmin()
+          || (isSignedIn()
+            && (('userId' in resource.data && resource.data.userId == request.auth.uid)
+              || ('email' in request.auth.token && resource.data.email == authEmail())));
+        allow create: if (isFamilyAdmin(familyId)
+            && canAddCaregiverOnPlan(familyId)
+            && request.resource.data.keys().hasAll([
+              'familyId', 'email', 'displayName', 'careStatus', 'createdAt'
+            ])
+            && request.resource.data.familyId == familyId
+            && request.resource.data.email is string
+            && request.resource.data.displayName is string
+            && validCareStatus(request.resource.data.careStatus))
+          || (isSignedIn()
+            && request.resource.data.userId == request.auth.uid
+            && 'email' in request.auth.token
+            && request.resource.data.email == authEmail()
+            && request.resource.data.familyId == familyId
+            && request.resource.data.invitationId is string
+            && isPendingCareCircleInvitee(request.resource.data.invitationId)
+            && careCircleInviteDoc(request.resource.data.invitationId).data.familyId == familyId
+            && careCircleInviteDoc(request.resource.data.invitationId).data.permission == 'caregiver'
+            && validCareStatus(request.resource.data.careStatus));
+        allow update: if (isFamilyAdmin(familyId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'displayName', 'phone', 'qualifications', 'certifications',
+              'experienceNotes', 'yearsOfExperience', 'availability',
+              'assignedSeniors', 'careStatus', 'userId', 'invitedBy',
+              'invitationId', 'familyName', 'updatedAt'
+            ])
+            && (!('careStatus' in request.resource.data)
+              || validCareStatus(request.resource.data.careStatus)))
+          || (isSignedIn()
+            && (('userId' in resource.data && resource.data.userId == request.auth.uid)
+              || ('email' in request.auth.token && resource.data.email == authEmail()))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'displayName', 'phone', 'qualifications', 'certifications',
+              'experienceNotes', 'yearsOfExperience', 'availability', 'updatedAt'
+            ]))
+          || (isSignedIn()
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.invitationId is string
+            && isPendingCareCircleInvitee(request.resource.data.invitationId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'userId', 'careStatus', 'assignedSeniors', 'displayName',
+              'invitationId', 'updatedAt'
+            ])
+            && validCareStatus(request.resource.data.careStatus));
+        allow delete: if isFamilyAdmin(familyId) || isPlatformAdmin();
+      }
+
+      match /usage/{docId} {
+        allow read: if isFamilyMember(familyId);
+        allow write: if false;
+      }
+
+      match /subscription/{docId} {
+        allow read: if isFamilyMember(familyId);
+        allow write: if false;
+      }
+
+      match /payments/{paymentId} {
+        allow read: if isFamilyMember(familyId);
+        allow write: if false;
+      }
+    }
+
+    // --------------------------------------------------------------- seniors
+
+    match /seniors/{seniorId} {
+      allow read: if isPlatformAdmin()
+        || (isSignedIn()
+          && 'familyId' in resource.data
+          && resource.data.familyId is string
+          && isFamilyMember(resource.data.familyId))
+        || (isSignedIn() && 'memberIds' in resource.data && request.auth.uid in resource.data.memberIds)
+        || canViewFullSenior(seniorId)
+        || isLinkedSeniorUser(seniorId);
+      // Senior creation/archive/purge are server-authoritative (Admin SDK).
+      allow create, delete: if false;
+      allow update: if canEditSenior(seniorId)
+        || (isCircleOwner(seniorId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['primaryCaregiverUserId', 'primaryCaregiverName', 'updatedAt']));
+
+      match /circleMembers/{memberId} {
+        allow read: if isOwner(memberId)
+          || isPlatformAdmin()
+          || (isActiveCircleMember(seniorId)
+            && circlePermission(seniorId) in ['owner', 'familyMember', 'caregiver', 'healthPractitioner']);
+        allow create: if (canInviteToSenior(seniorId)
+            && familyAllowsCirclePermission(seniorFamilyId(seniorId), request.resource.data.permission)
+            && validCirclePermission(request.resource.data.permission))
+          || (isSignedIn()
+            && memberId == request.auth.uid
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.permission == 'owner'
+            && request.resource.data.status == 'active');
+        allow update: if canManageCircle(seniorId)
+          || (isSignedIn() && memberId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'endedAt', 'updatedAt'])
+            && request.resource.data.status == 'removed');
+        allow delete: if canManageCircle(seniorId) || isOwner(memberId);
+      }
+
+      match /scheduleVisits/{visitId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if canEditSenior(seniorId)
+          && request.resource.data.keys().hasAll([
+            'familyId', 'seniorId', 'startsAt', 'endsAt', 'status'
+          ])
+          && request.resource.data.familyId == seniorFamilyId(seniorId)
+          && request.resource.data.seniorId == seniorId
+          && request.resource.data.startsAt is number
+          && request.resource.data.endsAt is number
+          && validCareShiftStatus(request.resource.data.status);
+        allow update: if canEditSenior(seniorId)
+          // Status-only transitions (cancel/accept/decline/expire) remain open
+          // to care-summary viewers and the linked senior.
+          || ((canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'statusUpdatedBy', 'statusUpdatedAt', 'updatedAt'
+            ])
+            && validCareShiftStatus(request.resource.data.status)
+            && (!('statusUpdatedBy' in request.resource.data)
+              || request.resource.data.statusUpdatedBy == request.auth.uid))
+          // Assigned caregiver/professional check-in / check-out sequence.
+          || (((('caregiverId' in resource.data)
+                && isAssignedCaregiverUser(seniorFamilyId(seniorId), resource.data.caregiverId))
+              || (('professionalId' in resource.data)
+                && resource.data.professionalId == request.auth.uid
+                && isActiveCircleMember(seniorId)
+                && isProfessionalCirclePermission(circlePermission(seniorId))))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'checkInAt', 'checkInLocation', 'checkInBy',
+              'checkOutAt', 'checkOutLocation', 'checkOutBy',
+              'completedTasks', 'visitDurationMinutes',
+              'status', 'statusUpdatedBy', 'statusUpdatedAt', 'updatedAt'
+            ])
+            && validCareShiftStatus(request.resource.data.status)
+            && request.resource.data.statusUpdatedBy == request.auth.uid
+            && (
+              // Check-in requires no prior check-out and no existing check-in.
+              (!('checkInAt' in resource.data)
+                && 'checkInAt' in request.resource.data
+                && request.resource.data.checkInAt is timestamp
+                && request.resource.data.checkInBy == request.auth.uid
+                && validVisitLocation(request.resource.data.checkInLocation)
+                && request.resource.data.status == 'checked_in'
+                && !('checkOutAt' in request.resource.data))
+              // Check-out requires an existing check-in and no prior check-out.
+              || ('checkInAt' in resource.data
+                && !('checkOutAt' in resource.data)
+                && 'checkOutAt' in request.resource.data
+                && request.resource.data.checkOutAt is timestamp
+                && request.resource.data.checkOutBy == request.auth.uid
+                && validVisitLocation(request.resource.data.checkOutLocation)
+                && request.resource.data.completedTasks is list
+                && request.resource.data.visitDurationMinutes is int
+                && request.resource.data.status == 'checked_out')
+            ));
+        allow delete: if canEditSenior(seniorId);
+      }
+
+      match /carePlans/{planId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create, update, delete: if canEditSenior(seniorId)
+          && request.resource.data.seniorId == seniorId;
+      }
+
+      match /carePlanTasks/{taskId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create, delete: if canEditSenior(seniorId);
+        allow update: if canEditSenior(seniorId)
+          || ((canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'completedAt', 'statusUpdatedBy', 'statusUpdatedAt',
+              'lastCompletedAt', 'lastCompletedBy', 'completionCount', 'updatedAt'
+            ])
+            && validCareTaskStatus(request.resource.data.status));
+      }
+
+      match /carePlanCompletions/{completionId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow update, delete: if canEditSenior(seniorId);
+      }
+
+      match /medications/{medicationId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if familyIsPlus(seniorFamilyId(seniorId))
+          && canEditSenior(seniorId)
+          && (!('route' in request.resource.data) || validMedicationRoute(request.resource.data.route))
+          && (!('frequency' in request.resource.data) || validMedicationFrequency(request.resource.data.frequency));
+        allow update: if canEditSenior(seniorId)
+          && (!('route' in request.resource.data) || validMedicationRoute(request.resource.data.route))
+          && (!('frequency' in request.resource.data) || validMedicationFrequency(request.resource.data.frequency));
+        allow delete: if canEditSenior(seniorId);
+      }
+
+      match /medicationDoses/{doseId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if canEditSenior(seniorId)
+          && (!('status' in request.resource.data) || validMedicationDoseStatus(request.resource.data.status));
+        allow update: if canEditSenior(seniorId)
+          || (canRecordMedicationDose(seniorId)
+            && (!isHealthPractitionerAppUser() || healthPractitionerTypeIn(['nurse', 'md']))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'statusUpdatedAt', 'statusUpdatedBy', 'takenAt', 'updatedAt'
+            ])
+            && validMedicationDoseStatus(request.resource.data.status))
+          || (isPlatformAdmin()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'notifiedAt', 'notificationStatus', 'notificationSuccessCount',
+              'notificationFailureCount', 'updatedAt'
+            ]));
+        allow delete: if canEditSenior(seniorId);
+      }
+
+      match /vitalReadings/{readingId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if canRecordVitals(seniorId)
+          && (!isHealthPractitionerAppUser() || healthPractitionerTypeIn(['nurse', 'md']))
+          && request.resource.data.familyId == seniorFamilyId(seniorId)
+          && request.resource.data.seniorId == seniorId
+          && request.resource.data.createdBy == request.auth.uid
+          && validVitalType(request.resource.data.type);
+        allow update: if false;
+        allow delete: if canEditSenior(seniorId);
+      }
+
+      match /visitReports/{reportId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        // Mobile reports are tied to a scheduleVisits shift. When the shift is
+        // a mobile caregiver assignment (`caregiverId`), the caller must be the
+        // assigned caregiver/professional and the shift must be checked_out.
+        // Shifts without `caregiverId` keep the canonical behavior.
+        allow create: if canViewCareSummary(seniorId)
+          && request.resource.data.familyId == seniorFamilyId(seniorId)
+          && request.resource.data.seniorId == seniorId
+          && request.resource.data.createdBy == request.auth.uid
+          && (!('shiftId' in request.resource.data)
+            || !exists(shiftPath(seniorId, request.resource.data.shiftId))
+            || !('caregiverId' in shiftDoc(seniorId, request.resource.data.shiftId))
+            || (isAssignedToShift(seniorId, request.resource.data.shiftId)
+              && shiftDoc(seniorId, request.resource.data.shiftId).status == 'checked_out'
+              && (('caregiverId' in request.resource.data
+                  && shiftDoc(seniorId, request.resource.data.shiftId).caregiverId
+                    == request.resource.data.caregiverId)
+                || ('professionalId' in request.resource.data
+                  && shiftDoc(seniorId, request.resource.data.shiftId).professionalId
+                    == request.auth.uid))));
+        allow update: if canViewCareSummary(seniorId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attachments', 'notes', 'notesLog', 'updatedAt']);
+        allow delete: if canEditSenior(seniorId) || isPlatformAdmin();
+      }
+
+      match /appointments/{appointmentId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if canEditSenior(seniorId)
+          && request.resource.data.familyId == seniorFamilyId(seniorId)
+          && request.resource.data.seniorId == seniorId
+          && request.resource.data.createdBy == request.auth.uid
+          && (!('type' in request.resource.data) || validAppointmentType(request.resource.data.type))
+          && (!('transportation' in request.resource.data) || validTransportation(request.resource.data.transportation))
+          && validAppointmentStatus(request.resource.data.status)
+          && validAppointmentAssignment(request.resource.data);
+        allow update: if (canEditSenior(seniorId)
+            // Family coordinators may assign/reset to pending but cannot
+            // self-accept or self-decline; that transition is the assignee's.
+            && (!('assignmentStatus' in request.resource.data)
+              || request.resource.data.assignmentStatus == 'pending'
+              || ('assignmentStatus' in resource.data
+                && request.resource.data.assignmentStatus == resource.data.assignmentStatus)))
+          || (canUpdateAppointmentStatus(seniorId)
+            && (!isHealthPractitionerAppUser() || healthPractitionerTypeIn(['nurse', 'md']))
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'statusUpdatedBy', 'updatedAt'])
+            && validAppointmentStatus(request.resource.data.status))
+          || (isSignedIn()
+            && resource.data.assignedUserId == request.auth.uid
+            && resource.data.assignmentStatus == 'pending'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'assignmentStatus', 'assignmentUpdatedBy', 'assignmentRespondedAt', 'updatedAt'
+            ])
+            && request.resource.data.assignmentStatus in ['accepted', 'declined'])
+          || (isPlatformAdmin()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'notifiedAt', 'notificationStatus', 'notificationSuccessCount',
+              'notificationFailureCount', 'updatedAt'
+            ]));
+        allow delete: if canEditSenior(seniorId);
+      }
+
+      match /emergencyAlerts/{alertId} {
+        allow read: if canViewCareSummary(seniorId)
+          || isLinkedSeniorUser(seniorId)
+          || (isActiveCircleMember(seniorId) && circlePermission(seniorId) == 'emergencyContact');
+        allow create: if (canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId))
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.message is string
+          && request.resource.data.message.size() > 0
+          && request.resource.data.message.size() <= 500;
+        allow update: if isPlatformAdmin();
+        allow delete: if isCircleOwner(seniorId) || isPlatformAdmin();
+      }
+
+      match /documents/{documentId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if canViewCareSummary(seniorId)
+          && request.resource.data.uploadedBy == request.auth.uid
+          && request.resource.data.visibility in ['circle', 'family', 'clinical'];
+        allow update: if canEditSenior(seniorId)
+          || (canViewCareSummary(seniorId) && request.resource.data.uploadedBy == resource.data.uploadedBy);
+        allow delete: if canEditSenior(seniorId) || isPlatformAdmin();
+      }
+
+      match /activities/{activityId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if (canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId))
+          && request.resource.data.actorId == request.auth.uid;
+        allow update, delete: if canEditSenior(seniorId) || isPlatformAdmin();
+      }
+
+      match /careSummary/{summaryId} {
+        allow read: if canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId);
+        allow create: if summaryId == 'current' && canEditSenior(seniorId);
+        allow update: if canEditSenior(seniorId);
+        allow delete: if isCircleOwner(seniorId) || isPlatformAdmin();
+      }
+    }
+
+    // ------------------------------------------------------------ chat (web model)
+
+    function canReadConversation() {
+      return isSignedIn()
+        && ((resource.data.keys().hasAny(['participantIds']) && request.auth.uid in resource.data.participantIds)
+          || (resource.data.keys().hasAny(['participantKeys']) && request.auth.uid in resource.data.participantKeys)
+          || (resource.data.type == 'circle' && isActiveCircleMember(resource.data.seniorId))
+          || isPlatformAdmin());
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if canReadConversation();
+      allow create: if isSignedIn()
+        && isActiveCircleMember(request.resource.data.seniorId)
+        && request.auth.uid in request.resource.data.participantKeys;
+      allow update: if isSignedIn() && canReadConversation()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastMessage', 'lastMessageAt', 'lastMessageBody', 'lastAuthorId',
+          'lastAuthorKey', 'lastAuthorName', 'updatedAt', 'readAtBy', 'unreadCount', 'title',
+          'participantKeys', 'participantIds'
+        ]);
+      allow delete: if isPlatformAdmin();
+    }
+
+    match /messages/{messageId} {
+      allow read: if isSignedIn()
+        && ((resource.data.keys().hasAny(['participantIds']) && request.auth.uid in resource.data.participantIds)
+          || (resource.data.keys().hasAny(['participantKeys']) && request.auth.uid in resource.data.participantKeys)
+          || (resource.data.type == 'circle' && isActiveCircleMember(resource.data.seniorId))
+          || isPlatformAdmin());
+      allow create: if isSignedIn()
+        && request.resource.data.authorId == request.auth.uid
+        && isActiveCircleMember(request.resource.data.seniorId)
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 4000;
+      allow update: if isSignedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy'])
+        && isActiveCircleMember(resource.data.seniorId)
+        && request.resource.data.readBy[request.auth.uid] is timestamp;
+      allow delete: if isPlatformAdmin();
+    }
+
+    // --------------------------------------------------------------- invites
+
+    match /careCircleInvites/{inviteId} {
+      allow read: if isSignedIn()
+        && (resource.data.invitedBy == request.auth.uid
+          || (('email' in request.auth.token) && resource.data.email == authEmail())
+          || (('phone' in resource.data)
+            && resource.data.phone is string
+            && resource.data.phone.size() > 0
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && ('phone' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data)
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone == resource.data.phone)
+          || (exists(seniorPath(resource.data.seniorId)) && canManageCircle(resource.data.seniorId))
+          || isPlatformAdmin());
+      // Create/accept are callable-authoritative. The invitee may decline and a
+      // circle manager may revoke (cancel) directly.
+      allow create, delete: if false;
+      allow update: if isSignedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
         && (
-          seniorDoc(seniorId).ownerId == request.auth.uid
-          || request.auth.uid in seniorDoc(seniorId).memberIds
+          (('email' in request.auth.token)
+            && resource.data.email == authEmail()
+            && resource.data.status == 'pending'
+            && request.resource.data.status == 'declined')
+          || (exists(seniorPath(resource.data.seniorId))
+            && canManageCircle(resource.data.seniorId)
+            && request.resource.data.status == 'revoked')
         );
     }
 
-    function isSeniorOwnerOf(seniorId) {
-      return isActiveUser()
-        && seniorExists(seniorId)
-        && seniorDoc(seniorId).ownerId == request.auth.uid;
-    }
+    // ----------------------------------------------------------- schedule locks
 
-    function canEditSeniorRecord(seniorId) {
-      return isSeniorOwnerOf(seniorId)
-        || isAdmin()
-        || (isSeniorMemberOf(seniorId) && (isFamilyRole() || isPractitionerRole()));
-    }
-
-    function canViewClinical(seniorId) {
-      return isSeniorOwnerOf(seniorId)
-        || isAdmin()
-        || (isSeniorMemberOf(seniorId) && (
-          isFamilyRole() || isPractitionerRole() || isCaregiverRole()
-        ));
-    }
-
-    function clientPlanIsFree() {
-      return !('plan' in request.resource.data)
-        || request.resource.data.plan == 'free';
-    }
-
-    function clientRoleAllowed() {
-      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
-        || request.resource.data.role == null
-        || request.resource.data.role in ['family', 'caregiver', 'health_practitioner']
-        || (resource.data.role == 'admin' && request.resource.data.role == 'admin');
-    }
-
-    function lockedAccountKeys() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
-        'plan',
-        'stripeCustomerId',
-        'stripeSubscriptionId',
-        'stripePriceId',
-        'subscriptionStatus',
-        'subscriptionPeriodEnd',
-        'subscriptionCancelAtPeriodEnd',
-        'status',
-        'suspendedAt',
-        'suspendedBy',
-        'suspendedReason',
-        'adminGrant',
-        'verificationStatus',
-        'verifiedAt',
-        'referralCode',
-        'referredBy',
-        'referredByCode',
-        'referralGrant'
-      ]);
-    }
-
-    function stringField(data, key, max) {
-      return !(key in data) || (data[key] is string && data[key].size() <= max);
-    }
-
-    // Shared by Famielda Mobile and Famielda Web. Document ID is the Firebase Auth UID.
-    // plan, Stripe, status, verification, and adminGrant fields are written only by Cloud Functions.
-    match /users/{userId} {
-      allow read: if isSelf(userId);
-      allow create: if isSelf(userId) && clientPlanIsFree()
-        && (!('role' in request.resource.data)
-          || request.resource.data.role == null
-          || request.resource.data.role in ['family', 'caregiver', 'health_practitioner'])
-        && !request.resource.data.keys().hasAny([
-          'stripeCustomerId',
-          'stripeSubscriptionId',
-          'stripePriceId',
-          'subscriptionStatus',
-          'subscriptionPeriodEnd',
-          'subscriptionCancelAtPeriodEnd',
-          'adminGrant',
-          'suspendedAt',
-          'suspendedBy',
-          'suspendedReason',
-          'verificationStatus',
-          'verifiedAt',
-          'referralCode',
-          'referredBy',
-          'referredByCode',
-          'referralGrant'
-        ])
-        && (!('status' in request.resource.data) || request.resource.data.status == 'active');
-      allow update: if isSelf(userId)
-        && !isSuspended()
-        && !lockedAccountKeys()
-        && clientRoleAllowed();
-      allow delete: if isSelf(userId);
-    }
-
-    match /users/{userId}/fcmTokens/{tokenId} {
-      allow read, write: if isSelf(userId) && isActiveUser();
-    }
-
-    match /subscriptions/{userId} {
-      allow read: if isSelf(userId);
+    match /caregiverScheduleLocks/{professionalId} {
+      allow read: if isSignedIn()
+        && (resource.data.professionalId == request.auth.uid
+          || resource.data.caregiverUserId == request.auth.uid
+          || isPlatformAdmin());
       allow write: if false;
+    }
+
+    // -------------------------------------------------------------- discovery
+
+    match /professionalDiscovery/{professionalId} {
+      allow read: if isFamilyCoordinatorUser();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------- ratings
+
+    match /professionalRatingSummaries/{professionalId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /professionalPublicRatings/{ratingId} {
+      allow get: if isSignedIn()
+        && (isPlatformAdmin() || resource == null || resource.data.status == 'published');
+      allow list: if isSignedIn() && resource.data.status == 'published';
+      allow write: if false;
+    }
+
+    match /professionalRatings/{ratingId} {
+      allow get: if isSignedIn()
+        && (isPlatformAdmin()
+          || resource == null
+          || resource.data.reviewerUserId == request.auth.uid
+          || resource.data.professionalId == request.auth.uid);
+      allow list: if isSignedIn()
+        && (isPlatformAdmin()
+          || resource.data.reviewerUserId == request.auth.uid
+          || resource.data.professionalId == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /reviewReports/{reportId} {
+      allow get: if isSignedIn()
+        && (isPlatformAdmin() || resource == null || resource.data.reporterUserId == request.auth.uid);
+      allow list: if isPlatformAdmin()
+        || (isSignedIn() && resource.data.reporterUserId == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /ratingAbuseControls/{userId} {
+      allow read, write: if false;
+    }
+
+    // --------------------------------------------------------- verification
+
+    // Fields a self-service professional may write to their own verification
+    // file. Review outcomes (status beyond the queue, reviewer identity and
+    // timestamps) stay admin/Cloud-Function owned.
+    function ownerVerificationWriteKeys() {
+      return ['userId', 'status', 'notes', 'licenseNumber', 'documents', 'submittedAt', 'updatedAt'];
+    }
+
+    function ownerVerificationDocumentWriteKeys() {
+      return ['userId', 'kind', 'title', 'fileName', 'contentType', 'size', 'storagePath', 'uploadedAt'];
+    }
+
+    function validVerificationDocumentKind(value) {
+      return value in ['identity', 'license', 'certification', 'insurance', 'other'];
+    }
+
+    // Owner draft of professionalVerifications/{uid}: must belong to the caller,
+    // stay in the review queue, and keep a bounded document list.
+    function validOwnerVerificationRecord(data, userId) {
+      return data.keys().hasAll(['userId', 'status'])
+        && data.userId == userId
+        && data.status is string
+        && validOwnerVerificationStatus(data.status)
+        && (!('notes' in data) || data.notes is string)
+        && (!('licenseNumber' in data) || data.licenseNumber is string)
+        && (!('submittedAt' in data) || data.submittedAt is timestamp)
+        && (!('updatedAt' in data) || data.updatedAt is timestamp)
+        && (!('documents' in data)
+          || (data.documents is list && data.documents.size() <= 12));
+    }
+
+    // Owner-uploaded professionalVerificationDocuments/{documentId}.
+    function validOwnerVerificationDocument(data, userId) {
+      return data.keys().hasAll(['userId'])
+        && data.userId == userId
+        && (!('kind' in data) || validVerificationDocumentKind(data.kind))
+        && (!('title' in data) || data.title is string)
+        && (!('fileName' in data) || data.fileName is string)
+        && (!('contentType' in data)
+          || data.contentType == null
+          || data.contentType is string)
+        && (!('size' in data)
+          || data.size == null
+          || data.size is number)
+        && (!('storagePath' in data) || data.storagePath is string)
+        && (!('uploadedAt' in data) || data.uploadedAt is timestamp);
+    }
+
+    match /professionalVerifications/{userId} {
+      allow read: if isOwner(userId) || isPlatformAdmin();
+      // The professional may create/refresh their own submission, but cannot
+      // write reviewer fields or self-verify.
+      allow create: if isOwner(userId)
+        && isProfessionalAppRole()
+        && request.resource.data.keys().hasOnly(ownerVerificationWriteKeys())
+        && validOwnerVerificationRecord(request.resource.data, userId);
+      // Updates are limited to the owner's writable fields and only while the
+      // file is still in the queue (a verified/suspended file is frozen).
+      allow update: if isSignedIn()
+        && isOwner(userId)
+        && isProfessionalAppRole()
+        && validOwnerVerificationRecord(request.resource.data, userId)
+        && resource.data.status in ['pending', 'under_review', 'rejected']
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(ownerVerificationWriteKeys());
+      allow delete: if false;
+    }
+
+    match /professionalVerificationDocuments/{documentId} {
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isPlatformAdmin());
+      // Documents may only be managed by the professional who owns the file.
+      allow create: if isSignedIn()
+        && isProfessionalAppRole()
+        && request.resource.data.keys().hasOnly(ownerVerificationDocumentWriteKeys())
+        && validOwnerVerificationDocument(request.resource.data, request.auth.uid);
+      allow update: if isSignedIn()
+        && isProfessionalAppRole()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(ownerVerificationDocumentWriteKeys())
+        && validOwnerVerificationDocument(request.resource.data, request.auth.uid);
+      allow delete: if isSignedIn()
+        && isProfessionalAppRole()
+        && resource.data.userId == request.auth.uid;
+    }
+
+    // -------------------------------------------------------------- referrals
+
+    match /familyReferrals/{referralId} {
+      allow read: if isSignedIn()
+        && (resource.data.referrerId == request.auth.uid
+          || resource.data.inviteeUserId == request.auth.uid
+          || resource.data.email == authEmail()
+          || isPlatformAdmin());
+      allow write: if false;
+    }
+
+    match /familyReferralCodes/{userId} {
+      allow read: if isOwner(userId) || isPlatformAdmin();
+      allow write: if false;
+    }
+
+    match /familyReferralCodeIndex/{code} {
+      allow get: if isSignedIn();
+      allow list: if isPlatformAdmin();
+      allow write: if false;
+    }
+
+    match /referralConfig/{configId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /referralStats/{statsId} {
+      allow read: if isPlatformAdmin();
+      allow write: if false;
+    }
+
+    // --------------------------------------------------- web-only: support etc.
+
+    match /supportTickets/{ticketId} {
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.subject is string
+        && request.resource.data.body is string;
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isPlatformAdmin());
+      allow update, delete: if isPlatformAdmin();
+    }
+
+    match /adminAuditLogs/{logId} {
+      allow read: if isPlatformAdmin();
+      allow write: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isPlatformAdmin();
+      allow write: if false;
+    }
+
+    match /monitoringEvents/{eventId} {
+      allow read: if isPlatformAdmin();
+      allow write: if false;
+    }
+
+    match /analyticsEvents/{eventId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow read: if isPlatformAdmin();
+      allow update, delete: if false;
+    }
+
+    match /rateLimits/{limitId} {
+      allow read, write: if false;
+    }
+
+    // ----------------------------------------------- server-only ledgers
+
+    match /platformEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /stripeWebhookEvents/{eventId} {
+      allow read, write: if false;
     }
 
     match /stripeCustomers/{customerId} {
@@ -190,515 +1198,26 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    match /adminAuditLogs/{logId} {
-      allow read: if isAdmin();
-      allow write: if false;
+    // ------------------------------------------------- collection-group reads
+
+    match /{path=**}/members/{memberId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
-    match /auditLogs/{logId} {
-      allow read: if isAdmin();
-      allow write: if false;
+    match /{path=**}/circleMembers/{memberId} {
+      allow read: if isSignedIn()
+        && ((resource.data.userId == request.auth.uid)
+          || (('email' in request.auth.token) && resource.data.email == authEmail()));
     }
 
-    match /analyticsEvents/{eventId} {
-      allow create: if isActiveUser()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.name in [
-          'registration',
-          'role_selected',
-          'senior_created',
-          'family_invited',
-          'caregiver_invited',
-          'practitioner_invited',
-          'invitation_accepted',
-          'schedule_created',
-          'visit_completed',
-          'task_completed',
-          'plus_upgrade',
-          'subscription_cancelled',
-          'android_app_download_click',
-          'ios_app_download_click'
-        ]
-        && request.resource.data.keys().hasOnly([
-          'name',
-          'userId',
-          'role',
-          'plan',
-          'platform',
-          'source',
-          'inviteKind',
-          'professionalKind',
-          'professionalType',
-          'outcome',
-          'planFrom',
-          'planTo',
-          'status',
-          'cancelAtPeriodEnd',
-          'interval',
-          'seniorId',
-          'visitId',
-          'taskId',
-          'inviteId',
-          'completionId',
-          'subscriptionId',
-          'dedupeKey',
-          'createdAt'
-        ])
-        && !request.resource.data.keys().hasAny([
-          'email',
-          'displayName',
-          'preferredName',
-          'body',
-          'notes',
-          'note',
-          'title',
-          'message',
-          'phone',
-          'address',
-          'diagnosis',
-          'medication',
-          'mood',
-          'symptoms',
-          'seniorName',
-          'caregiverName',
-          'familyName'
-        ])
-        && request.resource.data.source == 'client'
-        && stringField(request.resource.data, 'name', 64)
-        && stringField(request.resource.data, 'userId', 128)
-        && stringField(request.resource.data, 'role', 40)
-        && stringField(request.resource.data, 'plan', 20);
-      allow read: if isAdmin();
-      allow update, delete: if false;
+    match /{path=**}/caregivers/{caregiverId} {
+      allow read: if isSignedIn()
+        && (('userId' in resource.data && resource.data.userId == request.auth.uid)
+          || ('email' in request.auth.token && resource.data.email == authEmail()));
     }
 
-    match /monitoringEvents/{eventId} {
-      allow read: if isAdmin();
-      allow write: if false;
-    }
-
-    match /rateLimits/{limitId} {
+    match /{document=**} {
       allow read, write: if false;
-    }
-
-    match /scheduleEvents/{eventId} {
-      allow read, write: if false;
-    }
-
-    match /professionalVerifications/{userId} {
-      allow read: if isSelf(userId) || isAdmin();
-      allow write: if false;
-    }
-
-    match /professionalVerificationDocuments/{documentId} {
-      allow read: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || isAdmin()
-      );
-      allow write: if false;
-    }
-
-    match /familyReferralCodes/{userId} {
-      allow read: if isSelf(userId) || isAdmin();
-      allow write: if false;
-    }
-
-    match /familyReferralCodeIndex/{code} {
-      allow get: if isSignedIn();
-      allow list: if isAdmin();
-      allow write: if false;
-    }
-
-    match /familyReferrals/{referralId} {
-      allow read: if isActiveUser() && (
-        resource.data.referrerId == request.auth.uid ||
-        resource.data.inviteeUserId == request.auth.uid ||
-        resource.data.email == emailOf() ||
-        isAdmin()
-      );
-      allow write: if false;
-    }
-
-    match /supportTickets/{ticketId} {
-      allow create: if isActiveUser()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.subject is string
-        && request.resource.data.subject.size() > 0
-        && request.resource.data.subject.size() <= 200
-        && request.resource.data.body is string
-        && request.resource.data.body.size() > 0
-        && request.resource.data.body.size() <= 8000;
-      allow read: if isActiveUser() && (
-        resource.data.userId == request.auth.uid || isAdmin()
-      );
-      allow update, delete: if isAdmin();
-    }
-
-    function isListedSeniorMember() {
-      return isActiveUser() && (
-        resource.data.ownerId == request.auth.uid
-        || (resource.data.keys().hasAll(['memberIds']) && request.auth.uid in resource.data.memberIds)
-      );
-    }
-
-    match /seniors/{seniorId} {
-      allow read: if isListedSeniorMember() || isAdmin();
-      allow create: if isActiveUser()
-        && request.resource.data.ownerId == request.auth.uid
-        && request.auth.uid in request.resource.data.memberIds
-        && request.resource.data.memberIds.hasOnly([request.auth.uid])
-        && stringField(request.resource.data, 'displayName', 120);
-      allow update: if canEditSeniorRecord(seniorId)
-        && request.resource.data.ownerId == resource.data.ownerId
-        && (
-          request.resource.data.memberIds == resource.data.memberIds
-          || isSeniorOwnerOf(seniorId)
-        );
-      allow delete: if isSeniorOwnerOf(seniorId);
-    }
-
-    match /careCircleMembers/{memberId} {
-      allow read: if isActiveUser() && (
-        resource.data.userId == request.auth.uid
-        || resource.data.email == emailOf()
-        || isSeniorMemberOf(resource.data.seniorId)
-        || isAdmin()
-      );
-      allow create: if isActiveUser()
-        && request.resource.data.seniorId is string
-        && isSeniorOwnerOf(request.resource.data.seniorId)
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.role == 'owner'
-        && request.resource.data.status == 'active';
-      allow update: if isActiveUser()
-        && resource.data.seniorId == request.resource.data.seniorId
-        && (
-          resource.data.userId == request.auth.uid
-          || resource.data.email == emailOf()
-        )
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['availability', 'lastSeenAt', 'nextVisit', 'updatedAt']);
-      allow delete: if false;
-    }
-
-    match /careCircleInvites/{inviteId} {
-      allow read: if isActiveUser() && (
-        resource.data.invitedBy == request.auth.uid
-        || resource.data.email == emailOf()
-        || (
-          'phone' in resource.data
-          && resource.data.phone != ''
-          && hasUserDoc()
-          && 'phone' in userDoc()
-          && userDoc().phone != ''
-          && resource.data.phone == userDoc().phone
-        )
-        || isSeniorMemberOf(resource.data.seniorId)
-        || isAdmin()
-      );
-      allow create, update, delete: if false;
-    }
-
-    // Occupancy, overlap, and availability are owned by Cloud Functions.
-    match /caregiverAvailability/{windowId} {
-      allow read: if isActiveUser() && (
-        resource.data.caregiverUserId == request.auth.uid
-        || resource.data.caregiverEmail == emailOf()
-        || isAdmin()
-        || isFamilyRole()
-        || isPractitionerRole()
-      );
-      allow write: if false;
-    }
-
-    match /scheduleVisits/{visitId} {
-      allow read: if isActiveUser() && (
-        resource.data.caregiverUserId == request.auth.uid
-        || resource.data.caregiverEmail == emailOf()
-        || resource.data.requestedBy == request.auth.uid
-        || isSeniorMemberOf(resource.data.seniorId)
-        || isAdmin()
-      );
-      allow create, update, delete: if false;
-    }
-
-    match /caregiverScheduleLocks/{lockId} {
-      allow read: if isActiveUser() && (
-        resource.data.caregiverUserId == request.auth.uid
-        || resource.data.caregiverEmail == emailOf()
-        || isAdmin()
-        || isFamilyRole()
-        || isPractitionerRole()
-      );
-      allow write: if false;
-    }
-
-    match /carePlans/{planId} {
-      allow read: if isActiveUser() && (
-        isSeniorMemberOf(resource.data.seniorId) || isAdmin()
-      );
-      allow create: if isActiveUser()
-        && isSeniorMemberOf(request.resource.data.seniorId)
-        && (isSeniorOwnerOf(request.resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin())
-        && request.resource.data.seniorId is string
-        && stringField(request.resource.data, 'title', 160);
-      allow update: if isActiveUser()
-        && isSeniorMemberOf(resource.data.seniorId)
-        && request.resource.data.seniorId == resource.data.seniorId
-        && (isSeniorOwnerOf(resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin());
-      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
-    }
-
-    match /carePlanTasks/{taskId} {
-      allow read: if isActiveUser() && (
-        resource.data.assignedCaregiverUserId == request.auth.uid
-        || resource.data.assignedCaregiverEmail == emailOf()
-        || isSeniorMemberOf(resource.data.seniorId)
-        || isAdmin()
-      );
-      allow create: if isActiveUser()
-        && isSeniorMemberOf(request.resource.data.seniorId)
-        && request.resource.data.seniorId is string
-        && (isSeniorOwnerOf(request.resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin());
-      allow update: if isActiveUser()
-        && request.resource.data.seniorId == resource.data.seniorId
-        && (
-          isSeniorOwnerOf(resource.data.seniorId)
-          || isFamilyRole()
-          || isPractitionerRole()
-          || isAdmin()
-          || resource.data.assignedCaregiverUserId == request.auth.uid
-          || resource.data.assignedCaregiverEmail == emailOf()
-        );
-      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
-    }
-
-    match /carePlanCompletions/{completionId} {
-      allow read: if isActiveUser() && (
-        isSeniorMemberOf(resource.data.seniorId) || isAdmin()
-      );
-      allow create: if isActiveUser() && (
-        isSeniorMemberOf(request.resource.data.seniorId)
-        || request.resource.data.completedBy == request.auth.uid
-      );
-      allow update, delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
-    }
-
-    match /appointments/{appointmentId} {
-      allow read: if isActiveUser() && (
-        resource.data.practitionerUserId == request.auth.uid
-        || resource.data.practitionerEmail == emailOf()
-        || isSeniorMemberOf(resource.data.seniorId)
-        || isAdmin()
-      );
-      allow create: if isActiveUser()
-        && isSeniorMemberOf(request.resource.data.seniorId)
-        && request.resource.data.seniorId is string
-        && (isSeniorOwnerOf(request.resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin());
-      allow update: if isActiveUser()
-        && request.resource.data.seniorId == resource.data.seniorId
-        && (
-          isSeniorMemberOf(resource.data.seniorId)
-          || resource.data.practitionerUserId == request.auth.uid
-          || resource.data.practitionerEmail == emailOf()
-        );
-      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
-    }
-
-    match /medications/{medicationId} {
-      allow read: if isActiveUser() && canViewClinical(resource.data.seniorId)
-        && (
-          resource.data.responsibleUserId == request.auth.uid
-          || resource.data.responsibleEmail == emailOf()
-          || isSeniorMemberOf(resource.data.seniorId)
-          || isAdmin()
-        );
-      allow create: if isActiveUser()
-        && canViewClinical(request.resource.data.seniorId)
-        && isSeniorMemberOf(request.resource.data.seniorId)
-        && request.resource.data.seniorId is string
-        && (isSeniorOwnerOf(request.resource.data.seniorId) || isFamilyRole() || isPractitionerRole() || isAdmin());
-      allow update: if isActiveUser()
-        && request.resource.data.seniorId == resource.data.seniorId
-        && (
-          isSeniorMemberOf(resource.data.seniorId)
-          || resource.data.responsibleUserId == request.auth.uid
-          || resource.data.responsibleEmail == emailOf()
-        );
-      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
-    }
-
-    match /medicationDoses/{doseId} {
-      allow read: if isActiveUser() && (
-        resource.data.recordedBy == request.auth.uid
-        || isSeniorMemberOf(resource.data.seniorId)
-        || isAdmin()
-      );
-      allow create: if isActiveUser() && (
-        isSeniorMemberOf(request.resource.data.seniorId)
-        || request.resource.data.recordedBy == request.auth.uid
-      );
-      allow update: if isActiveUser() && (
-        isSeniorOwnerOf(resource.data.seniorId)
-        || isAdmin()
-        || resource.data.recordedBy == request.auth.uid
-      );
-      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
-    }
-
-    match /activities/{activityId} {
-      allow read: if isActiveUser() && (
-        resource.data.actorId == request.auth.uid
-        || isSeniorMemberOf(resource.data.seniorId)
-        || isAdmin()
-      );
-      allow create: if isActiveUser() && (
-        isSeniorMemberOf(request.resource.data.seniorId)
-        || request.resource.data.actorId == request.auth.uid
-      )
-        && request.resource.data.actorId == request.auth.uid
-        && stringField(request.resource.data, 'title', 200)
-        && stringField(request.resource.data, 'body', 2000);
-      allow update, delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
-    }
-
-    match /notifications/{notificationId} {
-      allow read: if isActiveUser() && (
-        resource.data.userId == request.auth.uid
-        || resource.data.email == emailOf()
-        || (resource.data.seniorId is string && isSeniorMemberOf(resource.data.seniorId))
-        || isAdmin()
-      );
-      allow create: if isActiveUser()
-        && stringField(request.resource.data, 'title', 200)
-        && stringField(request.resource.data, 'body', 2000)
-        && (
-          request.resource.data.userId == request.auth.uid
-          || (
-            request.resource.data.seniorId is string
-            && isSeniorMemberOf(request.resource.data.seniorId)
-            && (
-              !('userId' in request.resource.data)
-              || request.resource.data.userId == ''
-              || request.resource.data.userId in seniorDoc(request.resource.data.seniorId).memberIds
-            )
-          )
-        );
-      allow update: if isActiveUser() && (
-        resource.data.userId == request.auth.uid
-        || resource.data.email == emailOf()
-      )
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['read', 'readAt', 'seenAt', 'updatedAt']);
-      allow delete: if isActiveUser() && (
-        resource.data.userId == request.auth.uid
-        || isSeniorOwnerOf(resource.data.seniorId)
-        || isAdmin()
-      );
-    }
-
-    function canViewCareDocument() {
-      return isSeniorMemberOf(resource.data.seniorId) && (
-        isSeniorOwnerOf(resource.data.seniorId)
-        || isAdmin()
-        || resource.data.visibility == 'circle'
-        || (resource.data.visibility == 'family' && (isFamilyRole() || isAdmin()))
-        || (resource.data.visibility == 'clinical' && (
-          isFamilyRole() || isPractitionerRole() || isAdmin()
-        ))
-      );
-    }
-
-    match /documents/{documentId} {
-      allow read: if isActiveUser() && canViewCareDocument();
-      allow create: if isActiveUser()
-        && isSeniorMemberOf(request.resource.data.seniorId)
-        && request.resource.data.seniorId is string
-        && request.resource.data.uploadedBy == request.auth.uid
-        && request.resource.data.visibility in ['circle', 'family', 'clinical']
-        && stringField(request.resource.data, 'title', 160);
-      allow update: if isActiveUser()
-        && isSeniorMemberOf(resource.data.seniorId)
-        && request.resource.data.seniorId == resource.data.seniorId
-        && request.resource.data.uploadedBy == resource.data.uploadedBy
-        && (
-          isSeniorOwnerOf(resource.data.seniorId)
-          || isFamilyRole()
-          || isAdmin()
-          || resource.data.uploadedBy == request.auth.uid
-        );
-      allow delete: if isActiveUser() && (
-        isSeniorOwnerOf(resource.data.seniorId)
-        || isAdmin()
-        || (isSeniorMemberOf(resource.data.seniorId) && (
-          resource.data.uploadedBy == request.auth.uid
-          || isFamilyRole()
-        ))
-      );
-    }
-
-    function conversationParticipantsOnSenior(data) {
-      return data.participantIds is list
-        && data.participantIds.size() == 2
-        && data.participantIds.hasOnly(seniorDoc(data.seniorId).memberIds);
-    }
-
-    function canReadConversation() {
-      return isActiveUser() && (
-        (resource.data.keys().hasAny(['participantIds']) && request.auth.uid in resource.data.participantIds)
-        || (resource.data.keys().hasAny(['participantKeys']) && request.auth.uid in resource.data.participantKeys)
-        || (resource.data.type == 'circle' && isSeniorMemberOf(resource.data.seniorId))
-        || isAdmin()
-      );
-    }
-
-    match /conversations/{conversationId} {
-      allow read: if canReadConversation();
-      allow create: if isActiveUser()
-        && isSeniorMemberOf(request.resource.data.seniorId)
-        && request.auth.uid in request.resource.data.participantKeys
-        && (
-          request.resource.data.type == 'circle'
-          || conversationParticipantsOnSenior(request.resource.data)
-        );
-      allow update: if isActiveUser()
-        && canReadConversation()
-        && request.resource.data.seniorId == resource.data.seniorId
-        && request.resource.data.type == resource.data.type
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly([
-            'lastMessage',
-            'lastMessageAt',
-            'lastMessageBody',
-            'lastAuthorId',
-            'lastAuthorKey',
-            'lastAuthorName',
-            'updatedAt',
-            'readAtBy',
-            'unreadCount',
-            'title'
-          ]);
-      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
-    }
-
-    match /messages/{messageId} {
-      allow read: if isActiveUser() && (
-        (resource.data.keys().hasAny(['participantIds']) && request.auth.uid in resource.data.participantIds)
-        || (resource.data.keys().hasAny(['participantKeys']) && request.auth.uid in resource.data.participantKeys)
-        || (resource.data.type == 'circle' && isSeniorMemberOf(resource.data.seniorId))
-        || isAdmin()
-      );
-      allow create: if isActiveUser()
-        && request.resource.data.authorId == request.auth.uid
-        && isSeniorMemberOf(request.resource.data.seniorId)
-        && request.resource.data.body is string
-        && request.resource.data.body.size() > 0
-        && request.resource.data.body.size() <= 4000
-        && (
-          request.resource.data.type == 'circle'
-          || request.auth.uid in request.resource.data.participantIds
-        );
-      allow update: if false;
-      allow delete: if isSeniorOwnerOf(resource.data.seniorId) || isAdmin();
     }
   }
 }

@@ -6,7 +6,9 @@ const entitlements = require("./entitlements");
 const analytics = require("./analytics");
 const security = require("./security");
 
-const MEMBERS = "careCircleMembers";
+const SENIORS = "seniors";
+const MEMBERS = "circleMembers";
+const LEGACY_MEMBERS = "careCircleMembers";
 const INVITES = "careCircleInvites";
 const USERS = "users";
 
@@ -36,9 +38,83 @@ function emailOf(request) {
   return security.emailOf(request.auth?.token?.email);
 }
 
+function membersCol(seniorId) {
+  return db().collection(`${SENIORS}/${seniorId}/${MEMBERS}`);
+}
+
+function memberDoc(seniorId, memberId) {
+  return db().doc(`${SENIORS}/${seniorId}/${MEMBERS}/${memberId}`);
+}
+
+// Canonical singular permission stored alongside web role/permissions[]/kind.
+function singularPermissionFor({ role, kind, isEmergencyContact } = {}) {
+  if (role === "owner") return "owner";
+  if (kind === "caregiver") return "caregiver";
+  if (kind === "practitioner") return "healthPractitioner";
+  if (isEmergencyContact) return "emergencyContact";
+  return "familyMember";
+}
+
+// Mobile historically wrote `cancelled`; canonical invite status is `revoked`.
+function inviteStatusOf(invite) {
+  const status = invite?.status || INVITE.PENDING;
+  return status === "cancelled" ? INVITE.REVOKED : status;
+}
+
 async function listMembers(seniorId) {
-  const snap = await db().collection(MEMBERS).where("seniorId", "==", seniorId).get();
-  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  const found = [];
+  const seen = new Set();
+  const snap = await membersCol(seniorId).get();
+  for (const doc of snap.docs) {
+    seen.add(doc.id);
+    found.push({ id: doc.id, ...doc.data() });
+  }
+  // Backward-compatible: pre-migration top-level careCircleMembers.
+  try {
+    const legacy = await db().collection(LEGACY_MEMBERS).where("seniorId", "==", seniorId).get();
+    for (const doc of legacy.docs) {
+      if (seen.has(doc.id)) continue;
+      seen.add(doc.id);
+      found.push({ id: doc.id, ...doc.data() });
+    }
+  } catch (error) {
+    logger.warn("Legacy care circle member read failed", { seniorId, message: error.message });
+  }
+  return found;
+}
+
+async function membershipsForUser(uid) {
+  const found = [];
+  const seen = new Set();
+  const group = await db().collectionGroup(MEMBERS).where("userId", "==", uid).get();
+  for (const doc of group.docs) {
+    seen.add(doc.id);
+    found.push({ id: doc.id, ...doc.data() });
+  }
+  // Backward-compatible: pre-migration top-level careCircleMembers.
+  try {
+    const legacy = await db().collection(LEGACY_MEMBERS).where("userId", "==", uid).get();
+    for (const doc of legacy.docs) {
+      if (seen.has(doc.id)) continue;
+      seen.add(doc.id);
+      found.push({ id: doc.id, ...doc.data() });
+    }
+  } catch (error) {
+    logger.warn("Legacy care circle membership read failed", { uid, message: error.message });
+  }
+  return found;
+}
+
+// Resolve the member document, preferring the canonical subcollection but
+// falling back to a legacy top-level record so pre-migration data still works.
+async function resolveMemberRef(seniorId, memberId) {
+  const canonical = memberDoc(seniorId, memberId);
+  const snap = await canonical.get();
+  if (snap.exists) return canonical;
+  const legacy = db().doc(`${LEGACY_MEMBERS}/${memberId}`);
+  const legacySnap = await legacy.get();
+  if (legacySnap.exists && legacySnap.data().seniorId === seniorId) return legacy;
+  return canonical;
 }
 
 async function addMemberId(seniorId, uid) {
@@ -111,7 +187,7 @@ function publicInvitePreview(invite, extras = {}) {
   const existing = Boolean(invite.inviteeUserId || invite.accountState === "existing");
   return {
     token: invite.token || invite.id,
-    status: invite.status || INVITE.PENDING,
+    status: inviteStatusOf(invite),
     name: invite.name || "",
     seniorName: invite.seniorName || "",
     invitedByName: invite.invitedByName || "",
@@ -213,16 +289,21 @@ exports.inviteCareCircleMember = async (request) => {
   const storedEmail = normalizedEmail || security.emailOf(existingUser?.email);
   const storedPhone = normalizedPhone || security.phoneOf(existingUser?.phone);
   const now = new Date();
-  const memberRef = db().collection(MEMBERS).doc();
+  const memberRef = existingUser
+    ? memberDoc(seniorId, existingUser.id)
+    : membersCol(seniorId).doc();
   const inviteRef = db().collection(INVITES).doc();
+  const familyId = senior.familyId || senior.ownerId || null;
   const memberPayload = {
     seniorId,
+    familyId,
     name: security.textOf(name).slice(0, 120),
     email: storedEmail,
     phone: storedPhone,
     phoneCountry: security.textOf(phoneCountry).slice(0, 4).toUpperCase(),
     kind,
     role: circleRole,
+    permission: singularPermissionFor({ role: circleRole, kind }),
     relationship: security.textOf(relationship).slice(0, 80),
     professionalType: professionalType || null,
     permissions: Array.isArray(permissions) && permissions.length
@@ -237,6 +318,7 @@ exports.inviteCareCircleMember = async (request) => {
   const invitePayload = {
     token: inviteRef.id,
     seniorId,
+    familyId,
     seniorName: senior.displayName || "",
     email: storedEmail,
     phone: storedPhone,
@@ -247,6 +329,7 @@ exports.inviteCareCircleMember = async (request) => {
     name: memberPayload.name,
     kind,
     role: memberPayload.role,
+    permission: memberPayload.permission,
     relationship: memberPayload.relationship,
     professionalType: memberPayload.professionalType,
     permissions: memberPayload.permissions,
@@ -337,8 +420,7 @@ exports.acceptCareCircleInvite = async (request) => {
     throw new HttpsError("failed-precondition", "This invitation is no longer waiting.");
   }
 
-  const memberships = await db().collection(MEMBERS).where("userId", "==", uid).get()
-    .then((snap) => snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+  const memberships = await membershipsForUser(uid);
   if (!entitlements.canJoinAnotherFamily({
     user,
     memberships,
@@ -349,18 +431,20 @@ exports.acceptCareCircleInvite = async (request) => {
   }
 
   const now = new Date();
-  if (invite.memberId) {
-    await db().doc(`${MEMBERS}/${invite.memberId}`).set({
-      userId: uid,
-      name: user.displayName || invite.name || "",
-      email: email || invite.email || "",
-      phone: security.phoneOf(user.phone) || invite.phone || "",
-      status: STATUS.ACTIVE,
-      respondedAt: now,
-      lastSeenAt: now,
-      updatedAt: now,
-    }, { merge: true });
-  }
+  const memberRef = invite.memberId
+    ? await resolveMemberRef(invite.seniorId, invite.memberId)
+    : memberDoc(invite.seniorId, uid);
+  await memberRef.set({
+    userId: uid,
+    name: user.displayName || invite.name || "",
+    email: email || invite.email || "",
+    phone: security.phoneOf(user.phone) || invite.phone || "",
+    permission: invite.permission || singularPermissionFor({ role: invite.role, kind: invite.kind }),
+    status: STATUS.ACTIVE,
+    respondedAt: now,
+    lastSeenAt: now,
+    updatedAt: now,
+  }, { merge: true });
   await inviteRef.update({ status: INVITE.ACCEPTED, respondedAt: now, updatedAt: now });
   await addMemberId(invite.seniorId, uid);
   await db().doc(`${USERS}/${uid}`).update({ seniorId: invite.seniorId, updatedAt: now });
@@ -418,7 +502,8 @@ exports.declineCareCircleInvite = async (request) => {
   const now = new Date();
   await inviteRef.update({ status: INVITE.DECLINED, respondedAt: now, updatedAt: now });
   if (invite.memberId) {
-    await db().doc(`${MEMBERS}/${invite.memberId}`).set({
+    const memberRef = await resolveMemberRef(invite.seniorId, invite.memberId);
+    await memberRef.set({
       status: STATUS.DECLINED,
       respondedAt: now,
       updatedAt: now,
@@ -449,7 +534,7 @@ exports.removeCareCircleMember = async (request) => {
     security.PERMISSIONS.MANAGE_MEMBERS,
   );
 
-  const memberRef = db().doc(`${MEMBERS}/${memberId}`);
+  const memberRef = await resolveMemberRef(seniorId, memberId);
   const memberSnap = await memberRef.get();
   if (!memberSnap.exists) throw new HttpsError("not-found", "Member not found.");
   const member = memberSnap.data();
@@ -484,7 +569,7 @@ exports.updateCareCircleMember = async (request) => {
   }
 
   await security.requireHousehold(request, seniorId, security.PERMISSIONS.MANAGE_MEMBERS);
-  const memberRef = db().doc(`${MEMBERS}/${memberId}`);
+  const memberRef = await resolveMemberRef(seniorId, memberId);
   const snap = await memberRef.get();
   if (!snap.exists || snap.data().seniorId !== seniorId) {
     throw new HttpsError("not-found", "Member not found.");
@@ -497,6 +582,7 @@ exports.updateCareCircleMember = async (request) => {
   const nextRole = CIRCLE_ROLES.has(role) ? role : member.role;
   const patch = {
     role: nextRole,
+    permission: singularPermissionFor({ role: nextRole, kind: member.kind, isEmergencyContact: member.isEmergencyContact }),
     relationship: relationship != null ? security.textOf(relationship).slice(0, 80) : member.relationship,
     updatedAt: new Date(),
   };
@@ -522,7 +608,7 @@ exports.revokeCareCircleInvite = async (request) => {
   const now = new Date();
   await inviteRef.update({ status: INVITE.REVOKED, respondedAt: now, updatedAt: now });
   if (invite.memberId) {
-    const memberRef = db().doc(`${MEMBERS}/${invite.memberId}`);
+    const memberRef = await resolveMemberRef(invite.seniorId, invite.memberId);
     const memberSnap = await memberRef.get();
     if (memberSnap.exists && memberSnap.data().status !== STATUS.ACTIVE) {
       await memberRef.set({ status: STATUS.REMOVED, respondedAt: now, updatedAt: now }, { merge: true });
@@ -547,7 +633,8 @@ exports.resendCareCircleInvite = async (request) => {
   const now = new Date();
   await inviteRef.update({ status: INVITE.PENDING, updatedAt: now });
   if (invite.memberId) {
-    await db().doc(`${MEMBERS}/${invite.memberId}`).set({
+    const memberRef = await resolveMemberRef(invite.seniorId, invite.memberId);
+    await memberRef.set({
       status: STATUS.INVITED,
       invitedAt: now,
       respondedAt: null,
@@ -580,13 +667,15 @@ exports.ensureOwnerMembership = async (request) => {
   if (existing) return { ok: true, memberId: existing.id };
 
   const now = new Date();
-  const ref = db().collection(MEMBERS).doc();
+  const ref = memberDoc(senior.id, uid);
   await ref.set({
     seniorId: senior.id,
+    familyId: senior.familyId || senior.ownerId || null,
     userId: uid,
     name: user.displayName || "",
     email: security.emailOf(user.email),
     role: "owner",
+    permission: singularPermissionFor({ role: "owner", kind: "family" }),
     relationship: "Family",
     kind: "family",
     status: STATUS.ACTIVE,

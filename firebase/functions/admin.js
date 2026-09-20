@@ -221,11 +221,11 @@ function serializeNotice(doc) {
     type: data.type || "system",
     title: data.title || "",
     body: data.body || "",
-    userId: data.userId || "",
+    userId: data.recipientUserId || data.userId || "",
     email: data.email || "",
     seniorId: data.seniorId || "",
     href: data.href || "",
-    read: Boolean(data.read),
+    read: Boolean(data.isRead ?? data.read),
     priority: data.priority || "normal",
     createdAt: toIso(data.createdAt),
   };
@@ -768,7 +768,7 @@ exports.adminGetReports = async (request) => {
     countQuery(usersCol.where("plan", "==", "family")).catch(() => 0),
     countQuery(usersCol.where("plan", "==", "circle")).catch(() => 0),
     countQuery(db().collection(VISITS)),
-    countQuery(db().collection(NOTICES)),
+    countQuery(db().collectionGroup(NOTICES)).catch(() => 0),
     countQuery(db().collection(TICKETS).where("status", "==", SUPPORT.OPEN)).catch(() => 0),
   ]);
   const plusTotal = plus + familyPlan + circlePlan;
@@ -803,8 +803,8 @@ exports.adminGetReports = async (request) => {
 exports.adminListNotifications = async (request) => {
   await requireAdmin(request);
   const limit = clampLimit(request.data?.limit, PAGE_SIZE);
-  const snap = await db().collection(NOTICES).orderBy("createdAt", "desc").limit(limit + 1).get().catch(async () => (
-    db().collection(NOTICES).limit(limit + 1).get()
+  const snap = await db().collectionGroup(NOTICES).orderBy("createdAt", "desc").limit(limit + 1).get().catch(async () => (
+    db().collectionGroup(NOTICES).limit(limit + 1).get()
   ));
   const hasMore = snap.docs.length > limit;
   return { notifications: snap.docs.slice(0, limit).map(serializeNotice), total: Math.min(snap.size, limit), hasMore };

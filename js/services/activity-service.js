@@ -1,5 +1,4 @@
 import {
-  AUTH,
   ACTIVITY_TYPES,
   CARE_HISTORY_KINDS,
 } from "../config/constants.js";
@@ -10,8 +9,8 @@ import {
 import { activitySourceKey, createActivity } from "../models/activity.js";
 import { mockActivities } from "./mock-data.js";
 import { storage } from "../core/storage.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { getQueryDocs } from "../core/query.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { activitiesCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession } from "../auth/session.js";
 
@@ -87,25 +86,27 @@ function localActivities(filter = {}) {
     .filter((item) => !filter.seniorId || !item.seniorId || item.seniorId === filter.seniorId);
 }
 
-async function collectionDocs(collection, constraints = [], options = {}) {
-  return getQueryDocs(collection, constraints, { limit: QUERY_LIMITS.PAGE, ...options });
+async function collectionDocs(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.PAGE;
+  const parts = [...constraints];
+  if (options.startAfter) parts.push(sdk.startAfter(options.startAfter));
+  parts.push(sdk.limit(limit));
+  const snap = await sdk.getDocs(sdk.query(collectionRef, ...parts));
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 async function readActivities(filter = {}) {
   if (!usesLiveAuth()) return localActivities(filter);
+  if (!filter.seniorId) return [];
   const sdk = getFirestoreSdk();
-  const constraints = [];
-  if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
   const limit = filter.limit ?? QUERY_LIMITS.PAGE;
   try {
-    const ordered = [...constraints, sdk.orderBy("occurredAt", "desc")];
-    const docs = await collectionDocs(AUTH.ACTIVITIES_COLLECTION, ordered, { limit, startAfter: filter.startAfter });
+    const docs = await collectionDocs(activitiesCol(filter.seniorId), [sdk.orderBy("occurredAt", "desc")], { limit, startAfter: filter.startAfter });
     return docs.map((item) => activityFrom(item));
   } catch {
-    const docs = await collectionDocs(AUTH.ACTIVITIES_COLLECTION, constraints, { limit, startAfter: filter.startAfter });
-    return docs
-      .map((item) => activityFrom(item))
-      .filter((item) => !filter.seniorId || item.seniorId === filter.seniorId);
+    const docs = await collectionDocs(activitiesCol(filter.seniorId), [], { limit, startAfter: filter.startAfter });
+    return docs.map((item) => activityFrom(item));
   }
 }
 
@@ -119,11 +120,12 @@ async function saveActivityRecord(activity) {
     return activityFrom(writeLocalRecord(saved));
   }
 
-  const db = getFirebaseDb();
+  if (!record.seniorId) throw new Error("A senior record is needed before activity can be saved.");
   const sdk = getFirestoreSdk();
+  const collection = activitiesCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.ACTIVITIES_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.ACTIVITIES_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = { ...payload };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();

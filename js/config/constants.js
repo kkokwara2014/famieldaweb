@@ -19,7 +19,7 @@ export const AUTH = {
   CONVERSATIONS_COLLECTION: "conversations",
   MESSAGES_COLLECTION: "messages",
   NOTIFICATIONS_COLLECTION: "notifications",
-  FCM_TOKENS_SUBCOLLECTION: "fcmTokens",
+  FCM_TOKENS_SUBCOLLECTION: "devices",
   SUBSCRIPTIONS_COLLECTION: "subscriptions",
   SUPPORT_TICKETS_COLLECTION: "supportTickets",
   ADMIN_AUDIT_COLLECTION: "adminAuditLogs",
@@ -36,7 +36,7 @@ export const AUTH = {
 };
 
 export const ROLES = {
-  FAMILY: "family",
+  FAMILY: "family_member",
   CAREGIVER: "caregiver",
   HEALTH_PRACTITIONER: "health_practitioner",
   ADMIN: "admin",

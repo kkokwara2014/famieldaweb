@@ -9,10 +9,10 @@ import {
 import { mockNotifications } from "./mock-data.js";
 import { storage } from "../core/storage.js";
 import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { getQueryDocs } from "../core/query.js";
+import { userNotificationsCol, usersCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS, CACHE_TTL_MS } from "../config/performance.js";
 import { remember } from "../core/cache.js";
-import { listenCollection, subscribeShared } from "../core/listeners.js";
+import { subscribeShared } from "../core/listeners.js";
 import { paginateItems } from "../core/pagination.js";
 import { getSession, setSession } from "../auth/session.js";
 import { updateUserProfile } from "../auth/user-profile.js";
@@ -21,6 +21,33 @@ import { logger } from "../core/logger.js";
 const NOTICES_KEY = "notifications";
 const PREFS_KEY = "notificationPrefs";
 const TOKENS_KEY = "fcmTokens";
+const LEGACY_NOTICES = "notifications";
+
+function legacyNoticesCol() {
+  return getFirestoreSdk().collection(getFirebaseDb(), LEGACY_NOTICES);
+}
+
+async function resolveUidByEmail(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return "";
+  const sdk = getFirestoreSdk();
+  try {
+    const snap = await sdk.getDocs(sdk.query(
+      usersCol(),
+      sdk.where("email", "==", normalized),
+      sdk.limit(1),
+    ));
+    const doc = snap.docs[0];
+    return doc ? doc.id : "";
+  } catch {
+    return "";
+  }
+}
+
+async function resolveSessionUid(session = getSession()) {
+  if (session?.id) return session.id;
+  return resolveUidByEmail(session?.email);
+}
 
 function newId() {
   return `n-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -45,6 +72,8 @@ function emailsEqual(a, b) {
 function noticeFrom(data) {
   return createNotification({
     ...data,
+    read: data.isRead != null ? Boolean(data.isRead) : Boolean(data.read),
+    userId: data.recipientUserId || data.userId || "",
     createdAt: toIso(data.createdAt) || data.createdAt || nowIso(),
     readAt: toIso(data.readAt),
   });
@@ -108,15 +137,15 @@ function dedupeNotices(items) {
   });
 }
 
-async function collectionDocs(constraints = [], options = {}) {
-  const docs = await getQueryDocs(AUTH.NOTIFICATIONS_COLLECTION, constraints, {
-    limit: options.limit ?? QUERY_LIMITS.FEED,
-    startAfter: options.startAfter,
-    cache: options.cache,
-    ttl: options.ttl,
-    cacheKey: options.cacheKey,
-  });
-  return docs.map((item) => noticeFrom(item));
+async function collectionDocs(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.FEED;
+  const parts = [...constraints];
+  if (options.startAfter) parts.push(sdk.startAfter(options.startAfter));
+  parts.push(sdk.limit(limit));
+  const query = sdk.query(collectionRef, ...parts);
+  const snap = await sdk.getDocs(query);
+  return snap.docs.map((doc) => noticeFrom({ id: doc.id, ...doc.data() }));
 }
 
 async function readLiveNotices(session = getSession(), options = {}) {
@@ -125,22 +154,27 @@ async function readLiveNotices(session = getSession(), options = {}) {
   const limit = options.limit ?? QUERY_LIMITS.FEED;
   const key = `notices:${session.id || ""}:${session.email || ""}:${limit}`;
   return remember(key, CACHE_TTL_MS.FEED, async () => {
+    const email = String(session.email || "").trim().toLowerCase();
+    const uid = await resolveSessionUid(session);
     const queries = [];
-    if (session.id) {
-      queries.push(collectionDocs([
-        sdk.where("userId", "==", session.id),
+    if (uid) {
+      queries.push(collectionDocs(userNotificationsCol(uid), [
         sdk.orderBy("createdAt", "desc"),
-      ], { limit, cache: false, cacheKey: `uid:${session.id}` }).catch(() => collectionDocs([
-        sdk.where("userId", "==", session.id),
-      ], { limit, cache: false })));
+      ], { limit }).catch(() => collectionDocs(userNotificationsCol(uid), [], { limit })));
+      queries.push(collectionDocs(legacyNoticesCol(), [
+        sdk.where("userId", "==", uid),
+        sdk.orderBy("createdAt", "desc"),
+      ], { limit }).catch(() => collectionDocs(legacyNoticesCol(), [
+        sdk.where("userId", "==", uid),
+      ], { limit })));
     }
-    if (session.email) {
-      queries.push(collectionDocs([
-        sdk.where("email", "==", String(session.email).trim().toLowerCase()),
+    if (email) {
+      queries.push(collectionDocs(legacyNoticesCol(), [
+        sdk.where("email", "==", email),
         sdk.orderBy("createdAt", "desc"),
-      ], { limit, cache: false, cacheKey: `email:${session.email}` }).catch(() => collectionDocs([
-        sdk.where("email", "==", String(session.email).trim().toLowerCase()),
-      ], { limit, cache: false })));
+      ], { limit }).catch(() => collectionDocs(legacyNoticesCol(), [
+        sdk.where("email", "==", email),
+      ], { limit })));
     }
     const batches = await Promise.all(queries);
     return sortNotices(dedupeNotices(batches.flat()));
@@ -174,18 +208,25 @@ export async function unreadCount(session = getSession()) {
   if (!session?.id && !session?.email) return 0;
   const sdk = getFirestoreSdk();
   const limit = QUERY_LIMITS.UNREAD;
+  const email = String(session.email || "").trim().toLowerCase();
+  const uid = await resolveSessionUid(session);
   const queries = [];
-  if (session.id) {
-    queries.push(collectionDocs([
-      sdk.where("userId", "==", session.id),
+  if (uid) {
+    queries.push(collectionDocs(userNotificationsCol(uid), [
+      sdk.where("isRead", "==", false),
+    ], { limit }).catch(() => collectionDocs(userNotificationsCol(uid), [
       sdk.where("read", "==", false),
-    ], { limit, cache: false }).catch(() => []));
+    ], { limit }).catch(() => [])));
+    queries.push(collectionDocs(legacyNoticesCol(), [
+      sdk.where("userId", "==", uid),
+      sdk.where("read", "==", false),
+    ], { limit }).catch(() => []));
   }
-  if (session.email) {
-    queries.push(collectionDocs([
-      sdk.where("email", "==", String(session.email).trim().toLowerCase()),
+  if (email) {
+    queries.push(collectionDocs(legacyNoticesCol(), [
+      sdk.where("email", "==", email),
       sdk.where("read", "==", false),
-    ], { limit, cache: false }).catch(() => []));
+    ], { limit }).catch(() => []));
   }
   const items = sortNotices(dedupeNotices((await Promise.all(queries)).flat()));
   return items.filter((item) => !item.read).length;
@@ -196,11 +237,18 @@ export async function getNotification(id, session = getSession()) {
   if (!usesLiveAuth()) {
     return localNotices().find((item) => item.id === id) ?? null;
   }
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.NOTIFICATIONS_COLLECTION, id));
-  if (!snap.exists()) return null;
-  const notice = noticeFrom({ id: snap.id, ...snap.data() });
+  const uid = await resolveSessionUid(session);
+  if (uid) {
+    const snap = await sdk.getDoc(sdk.doc(userNotificationsCol(uid), id));
+    if (snap.exists()) {
+      const notice = noticeFrom({ id: snap.id, ...snap.data() });
+      return belongsToSession(notice, session) ? notice : null;
+    }
+  }
+  const legacySnap = await sdk.getDoc(sdk.doc(legacyNoticesCol(), id)).catch(() => null);
+  if (!legacySnap?.exists?.()) return null;
+  const notice = noticeFrom({ id: legacySnap.id, ...legacySnap.data() });
   return belongsToSession(notice, session) ? notice : null;
 }
 
@@ -247,17 +295,26 @@ export async function postNotification(input = {}, session = getSession()) {
     return next;
   }
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const uid = next.userId || await resolveUidByEmail(next.email);
+  if (!uid) return null;
+
+  const collection = userNotificationsCol(uid);
   const ref = next.id
-    ? sdk.doc(db, AUTH.NOTIFICATIONS_COLLECTION, next.id)
-    : sdk.doc(sdk.collection(db, AUTH.NOTIFICATIONS_COLLECTION));
-  const payload = toDoc({ ...next, id: ref.id, email: String(next.email || "").toLowerCase() });
+    ? sdk.doc(collection, next.id)
+    : sdk.doc(collection);
+  const payload = toDoc({
+    ...next,
+    id: ref.id,
+    recipientUserId: uid,
+    email: String(next.email || "").toLowerCase(),
+  });
   await sdk.setDoc(ref, {
     ...payload,
+    isRead: Boolean(next.read),
     createdAt: payload.createdAt ? payload.createdAt : sdk.serverTimestamp(),
   }, { merge: true });
-  return noticeFrom({ ...next, id: ref.id });
+  return noticeFrom({ ...next, id: ref.id, recipientUserId: uid });
 }
 
 export function asRecipients(...people) {
@@ -304,7 +361,7 @@ export async function notifyQuietly(people, payload = {}, session = getSession()
   }
 }
 
-async function saveNoticePatch(id, patch) {
+async function saveNoticePatch(id, patch, uid = "") {
   if (!usesLiveAuth()) {
     const all = localNotices();
     const next = all.map((item) => (item.id === id ? noticeFrom({ ...item, ...patch }) : item));
@@ -312,9 +369,10 @@ async function saveNoticePatch(id, patch) {
     emitLocalChange();
     return next.find((item) => item.id === id) ?? null;
   }
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const ref = sdk.doc(db, AUTH.NOTIFICATIONS_COLLECTION, id);
+  const ref = uid
+    ? sdk.doc(userNotificationsCol(uid), id)
+    : sdk.doc(legacyNoticesCol(), id);
   await sdk.updateDoc(ref, patch);
   const snap = await sdk.getDoc(ref);
   return snap.exists() ? noticeFrom({ id: snap.id, ...snap.data() }) : null;
@@ -325,13 +383,13 @@ export async function markNotificationRead(id, read = true, session = getSession
     read: Boolean(read),
     readAt: read ? nowIso() : null,
   };
+  const uid = await resolveSessionUid(session);
   const saved = await saveNoticePatch(id, usesLiveAuth()
     ? {
-      read: patch.read,
+      isRead: patch.read,
       readAt: read ? getFirestoreSdk().serverTimestamp() : null,
     }
-    : patch);
-  void session;
+    : patch, uid);
   return saved;
 }
 
@@ -427,35 +485,39 @@ export function subscribeNotificationFeed(handler, session = getSession()) {
       };
     }
 
-    const db = getFirebaseDb();
     const sdk = getFirestoreSdk();
-    const buckets = { user: [], email: [] };
-    const publish = () => emit(sortNotices(dedupeNotices([...buckets.user, ...buckets.email])));
+    const buckets = { user: [], legacy: [], email: [] };
+    const publish = () => emit(sortNotices(dedupeNotices([
+      ...buckets.user,
+      ...buckets.legacy,
+      ...buckets.email,
+    ])));
     const stops = [];
 
-    const listen = (bucket, constraints) => listenCollection(
-      sdk,
-      db,
-      AUTH.NOTIFICATIONS_COLLECTION,
-      constraints,
-      (snap) => {
+    const listen = (bucket, collectionRef, constraints) => {
+      const query = sdk.query(collectionRef, ...constraints, sdk.limit(QUERY_LIMITS.FEED));
+      stops.push(sdk.onSnapshot(query, (snap) => {
         buckets[bucket] = snap.docs.map((doc) => noticeFrom({ id: doc.id, ...doc.data() }));
         publish();
-      },
-      { limit: QUERY_LIMITS.FEED },
-    );
+      }, (error) => {
+        logger.warn("Notification listener failed.", error);
+      }));
+    };
 
     if (session.id) {
-      stops.push(listen("user", [
+      listen("user", userNotificationsCol(session.id), [
+        sdk.orderBy("createdAt", "desc"),
+      ]);
+      listen("legacy", legacyNoticesCol(), [
         sdk.where("userId", "==", session.id),
         sdk.orderBy("createdAt", "desc"),
-      ]));
+      ]);
     }
     if (session.email) {
-      stops.push(listen("email", [
+      listen("email", legacyNoticesCol(), [
         sdk.where("email", "==", String(session.email).trim().toLowerCase()),
         sdk.orderBy("createdAt", "desc"),
-      ]));
+      ]);
     }
 
     return () => stops.forEach((stop) => stop());

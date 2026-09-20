@@ -4,7 +4,7 @@ const { logger } = require("firebase-functions");
 const security = require("./security");
 
 exports.onCareDocumentDeleted = onDocumentDeleted(
-  "documents/{documentId}",
+  "seniors/{seniorId}/documents/{documentId}",
   async (event) => {
     const data = event.data?.data();
     const path = data?.storagePath;
@@ -20,7 +20,7 @@ exports.onCareDocumentDeleted = onDocumentDeleted(
     }
     await security.writeSystemAudit("document.deleted", {
       targetId: event.params.documentId,
-      seniorId: data?.seniorId,
+      seniorId: data?.seniorId || event.params.seniorId,
       sensitive: true,
       targetType: "document",
     }).catch((error) => {

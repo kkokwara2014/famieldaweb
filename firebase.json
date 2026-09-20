@@ -120,13 +120,10 @@
     "rules": "firebase/firestore.rules",
     "indexes": "firebase/firestore.indexes.json"
   },
-  "storage": {
-    "rules": "firebase/storage.rules"
-  },
   "functions": [
     {
       "source": "firebase/functions",
-      "codebase": "default",
+      "codebase": "web",
       "ignore": [
         "node_modules",
         ".git",

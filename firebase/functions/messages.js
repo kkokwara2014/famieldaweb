@@ -1,12 +1,22 @@
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getFirestore } = require("firebase-admin/firestore");
 const { logger } = require("firebase-functions");
+const notifications = require("./notifications");
 
 const MEMBERS = "careCircleMembers";
-const NOTICES = "notifications";
+const CIRCLE_CONVERSATION_SUFFIX = "_circle";
 
 function db() {
   return getFirestore();
+}
+
+function seniorIdFor(message = {}) {
+  if (message.seniorId) return message.seniorId;
+  const conversationId = String(message.conversationId || "");
+  if (conversationId.endsWith(CIRCLE_CONVERSATION_SUFFIX)) {
+    return conversationId.slice(0, -CIRCLE_CONVERSATION_SUFFIX.length);
+  }
+  return "";
 }
 
 async function activeMembers(seniorId) {
@@ -38,12 +48,14 @@ exports.onCareMessageCreated = onDocumentCreated(
   "messages/{messageId}",
   async (event) => {
     const message = event.data?.data();
-    if (!message?.seniorId || !message.body) return;
+    const seniorId = seniorIdFor(message || {});
+    if (!seniorId || !message?.body) return;
 
-    const members = await activeMembers(message.seniorId);
+    const messageType = message.messageType || message.type || "";
+    const members = await activeMembers(seniorId);
     const author = memberForAuthor(members, message);
 
-    if (message.type === "direct") {
+    if (messageType === "direct") {
       const keys = Array.isArray(message.participantKeys) ? message.participantKeys : [];
       const authorKey = message.authorKey || message.authorId;
       const otherKey = keys.find((key) => key && key !== authorKey);
@@ -56,30 +68,29 @@ exports.onCareMessageCreated = onDocumentCreated(
       if (author && other && !((isFamily(author) && isProfessional(other)) || (isProfessional(author) && isFamily(other)))) {
         logger.warn("Blocked unrelated Famielda message recipients from notice", {
           id: event.params.messageId,
-          seniorId: message.seniorId,
+          seniorId,
         });
         return;
       }
 
       if (!other) return;
-      await db().collection(NOTICES).add({
+      await notifications.createNotice({
         type: "message",
         title: `${message.authorName || message.author || "Someone"} sent a message`,
         body: String(message.body).slice(0, 160),
-        userId: other.userId || "",
+        recipientUserId: other.userId || "",
         email: other.email || "",
-        seniorId: message.seniorId,
+        seniorId,
         conversationId: message.conversationId || "",
         href: message.conversationId ? `/app/messages.html?thread=${message.conversationId}` : "/app/messages.html",
-        createdAt: FieldValue.serverTimestamp(),
-        read: false,
       });
       return;
     }
 
     logger.info("Circle message posted", {
       id: event.params.messageId,
-      seniorId: message.seniorId,
+      seniorId,
+      messageType: messageType || "circle",
     });
   },
 );

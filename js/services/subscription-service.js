@@ -13,8 +13,10 @@ import {
 import { getSession, refreshSession, setSession } from "../auth/session.js";
 import { updateMockUser } from "../auth/auth-service.js";
 import { createUser } from "../models/user.js";
-import { usesLiveAuth } from "../core/firebase.js";
+import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
 import { callCloudFunction } from "../core/functions.js";
+import { familyPaymentsCol, familySubscriptionDoc } from "../core/firestore-paths.js";
+import { QUERY_LIMITS } from "../config/performance.js";
 import {
   catalogPlanId,
   circleUsage,
@@ -22,6 +24,7 @@ import {
   isPlusPlan,
   planIdOf,
 } from "./entitlement-service.js";
+import { resolveFamilyId } from "./user-service.js";
 import { PRODUCT_EVENTS, trackProductEvent } from "./analytics-service.js";
 
 export const BILLING_INTERVALS = {
@@ -89,13 +92,132 @@ export function formatPlanPrice(plan, { compact = false } = {}) {
   return plan.price;
 }
 
+function toIso(value) {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (typeof value.toDate === "function") return value.toDate().toISOString();
+  if (value instanceof Date) return value.toISOString();
+  return null;
+}
+
+// Canonical-first subscription field reads with legacy fallbacks so documents
+// written before the schema alignment keep working.
+function statusOf(session, snapshot = null) {
+  return snapshot?.status || session?.subscriptionStatus || null;
+}
+
+function periodEndOf(session, snapshot = null) {
+  return snapshot?.currentPeriodEnd
+    || snapshot?.periodEnd
+    || session?.currentPeriodEnd
+    || session?.subscriptionPeriodEnd
+    || null;
+}
+
+function cancelAtPeriodEndOf(session, snapshot = null) {
+  if (snapshot) {
+    return Boolean(snapshot.cancelAtPeriodEnd ?? snapshot.subscriptionCancelAtPeriodEnd ?? false);
+  }
+  return Boolean(session?.cancelAtPeriodEnd ?? session?.subscriptionCancelAtPeriodEnd ?? false);
+}
+
+function intervalFieldOf(session, snapshot = null) {
+  return snapshot?.interval || session?.interval || session?.subscriptionInterval || "";
+}
+
 function billingIntervalOf(session, snapshot = null) {
-  const raw = String(snapshot?.interval || session?.subscriptionInterval || "").trim().toLowerCase();
+  const raw = String(intervalFieldOf(session, snapshot)).trim().toLowerCase();
   if (raw === BILLING_INTERVALS.YEAR) return BILLING_INTERVALS.YEAR;
   if ((snapshot?.stripePriceId || session?.stripePriceId) === PLUS_ANNUAL_PRICE_ID) {
     return BILLING_INTERVALS.YEAR;
   }
   if (isPlusPlan(snapshot?.plan || session?.plan)) return BILLING_INTERVALS.MONTH;
+  return null;
+}
+
+function paymentToInvoice(payment = {}) {
+  const amount = payment.amountPaid ?? payment.amount ?? payment.amountDue ?? payment.total ?? null;
+  return {
+    id: payment.id || payment.stripeInvoiceId || payment.stripePaymentIntentId || "",
+    number: payment.number || payment.receiptNumber || payment.invoiceNumber || "",
+    status: payment.status || "paid",
+    amountPaid: payment.amountPaid ?? amount,
+    amountDue: payment.amountDue ?? 0,
+    currency: payment.currency || "USD",
+    createdAt: toIso(payment.createdAt) || toIso(payment.paidAt) || toIso(payment.periodEnd),
+    periodEnd: toIso(payment.periodEnd),
+    hostedInvoiceUrl: payment.hostedInvoiceUrl || payment.receiptUrl || "",
+    invoicePdf: payment.invoicePdf || "",
+  };
+}
+
+// Map a canonical families/{familyId}/subscription/current (or legacy
+// subscriptions/{uid}) document onto the snapshot shape the billing UI expects.
+function subscriptionDocSnapshot(data = {}, { familyId = null, invoices = [] } = {}) {
+  const plan = catalogPlanId(data.plan || (data.plusEntitled ? SUBSCRIPTION_PLANS.PLUS : SUBSCRIPTION_PLANS.FREE));
+  const stripePriceId = data.stripePriceId || null;
+  const interval = billingIntervalOf({ stripePriceId }, { plan, stripePriceId });
+  return {
+    familyId: data.familyId || familyId,
+    plan,
+    status: data.status || (data.plusEntitled ? "active" : "none"),
+    periodEnd: toIso(data.currentPeriodEnd) || toIso(data.trialEndsAt),
+    cancelAtPeriodEnd: Boolean(data.cancelAtPeriodEnd),
+    stripeCustomerId: data.stripeCustomerId || null,
+    hasStripeCustomer: Boolean(data.stripeCustomerId),
+    paymentMethod: null,
+    invoices,
+    interval,
+    stripePriceId,
+    stripeSubscriptionId: data.stripeSubscriptionId || null,
+    billingUserId: data.billingUserId || null,
+    plusEntitled: Boolean(data.plusEntitled),
+    trialEndsAt: toIso(data.trialEndsAt),
+    trialUsed: Boolean(data.trialUsed),
+    currentPeriodStart: toIso(data.currentPeriodStart),
+    canceledAt: toIso(data.canceledAt),
+    updatedAt: toIso(data.updatedAt),
+    source: "family",
+  };
+}
+
+async function readFamilyPayments(sdk, familyId) {
+  const snap = await sdk.getDocs(sdk.query(
+    familyPaymentsCol(familyId),
+    sdk.orderBy("createdAt", "desc"),
+    sdk.limit(QUERY_LIMITS.PAGE),
+  ));
+  return snap.docs.map((doc) => paymentToInvoice({ id: doc.id, ...doc.data() }));
+}
+
+// Canonical family-scoped billing read with a legacy per-user fallback.
+async function readFamilyBillingSnapshot(session) {
+  if (!usesLiveAuth() || !session?.id) return null;
+  const sdk = getFirestoreSdk();
+  const db = getFirebaseDb();
+  if (!sdk || !db) return null;
+
+  const familyId = await resolveFamilyId(session.id).catch(() => null);
+  if (familyId) {
+    try {
+      const snap = await sdk.getDoc(familySubscriptionDoc(familyId));
+      if (snap.exists()) {
+        const invoices = await readFamilyPayments(sdk, familyId).catch(() => []);
+        return subscriptionDocSnapshot(snap.data(), { familyId, invoices });
+      }
+    } catch {
+      // fall back to the legacy per-user document
+    }
+  }
+
+  try {
+    const legacy = await sdk.getDoc(sdk.doc(db, "subscriptions", session.id));
+    if (legacy.exists()) {
+      return subscriptionDocSnapshot(legacy.data(), { familyId });
+    }
+  } catch {
+    // no legacy billing document
+  }
   return null;
 }
 
@@ -160,38 +282,40 @@ function emptySnapshot(session = getSession()) {
   const periodEnd = plus ? (session?.referralGrant?.expiresAt || mockPeriodEnd(session, interval)) : null;
   return {
     plan: id,
-    status: session?.subscriptionStatus || (referralTrial ? "trialing" : (plus ? "active" : "none")),
+    status: statusOf(session) || (referralTrial ? "trialing" : (plus ? "active" : "none")),
     periodEnd,
-    cancelAtPeriodEnd: Boolean(session?.subscriptionCancelAtPeriodEnd),
+    cancelAtPeriodEnd: cancelAtPeriodEndOf(session),
     stripeCustomerId: session?.stripeCustomerId || null,
     hasStripeCustomer: Boolean(session?.stripeCustomerId) || (plus && !usesLiveAuth() && !referralTrial),
     paymentMethod: plus && !usesLiveAuth() && !referralTrial ? { brand: "visa", last4: "4242" } : null,
     invoices: plus && !usesLiveAuth() && !referralTrial ? [mockInvoice(periodEnd, interval)] : [],
     interval,
     stripePriceId: session?.stripePriceId || null,
+    stripeSubscriptionId: session?.stripeSubscriptionId || null,
+    currentPeriodStart: session?.currentPeriodStart || null,
+    trialEndsAt: session?.trialEndsAt || null,
+    trialUsed: Boolean(session?.trialUsed),
+    billingUserId: session?.billingUserId || session?.id || null,
     mock: !usesLiveAuth(),
   };
 }
 
 function withBilling(plan, session, snapshot = null) {
   const plus = isPlusPlan(plan.id);
-  const periodEnd = snapshot?.periodEnd
-    || session?.subscriptionPeriodEnd
+  const periodEnd = periodEndOf(session, snapshot)
     || (plus && !usesLiveAuth() ? mockPeriodEnd(session) : null);
   return {
     ...plan,
-    status: snapshot?.status || session?.subscriptionStatus || (plus ? "active" : "none"),
+    status: statusOf(session, snapshot) || (plus ? "active" : "none"),
     periodEnd,
-    cancelAtPeriodEnd: snapshot
-      ? Boolean(snapshot.cancelAtPeriodEnd)
-      : Boolean(session?.subscriptionCancelAtPeriodEnd),
+    cancelAtPeriodEnd: cancelAtPeriodEndOf(session, snapshot),
     stripeCustomerId: snapshot?.stripeCustomerId || session?.stripeCustomerId || null,
     hasStripeCustomer: snapshot
-      ? Boolean(snapshot.hasStripeCustomer)
+      ? Boolean(snapshot.hasStripeCustomer ?? snapshot.stripeCustomerId)
       : Boolean(session?.stripeCustomerId) || (plus && !usesLiveAuth()),
     paymentMethod: snapshot?.paymentMethod || null,
     invoices: snapshot?.invoices || [],
-    interval: snapshot?.interval || session?.subscriptionInterval || plan.interval || null,
+    interval: intervalFieldOf(session, snapshot) || plan.interval || null,
   };
 }
 
@@ -203,7 +327,7 @@ export async function getCurrentPlan(session = getSession(), snapshot = null) {
   if (session?.referralGrant?.active && !snapshot?.status) {
     return {
       ...billing,
-      status: session.subscriptionStatus || "trialing",
+      status: statusOf(session) || "trialing",
       periodEnd: session.referralGrant.expiresAt || billing.periodEnd,
       interval: billing.interval || interval,
     };
@@ -272,9 +396,16 @@ export async function startPlusCheckout(session = getSession(), options = {}) {
     return { mock: true, url: null, interval };
   }
 
-  const result = await callCloudFunction("createPlusCheckout", {
-    origin: checkoutOrigin(),
-    interval,
+  const familyId = await resolveFamilyId(session.id);
+  if (!familyId) {
+    throw new Error("A family is required before starting Famielda Plus.");
+  }
+  const origin = checkoutOrigin();
+  const result = await callCloudFunction("createSubscriptionCheckout", {
+    familyId,
+    plan: interval === BILLING_INTERVALS.YEAR ? "annual" : "monthly",
+    successUrl: `${origin}/app/settings.html?tab=plans&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancelUrl: `${origin}/app/settings.html?tab=plans&checkout=cancel`,
   }, { fallback: "Stripe Checkout could not start. Please try again." });
   if (!result?.url) {
     throw new Error("Stripe Checkout did not return a URL.");
@@ -314,8 +445,13 @@ export async function openBillingPortal(session = getSession(), flow = PORTAL_FL
     throw new Error("The Stripe customer portal is available when Firebase and Cloud Functions are connected.");
   }
 
-  const result = await callCloudFunction("createBillingPortal", {
-    origin: checkoutOrigin(),
+  const familyId = await resolveFamilyId(session.id);
+  if (!familyId) {
+    throw new Error("A family is required to manage billing.");
+  }
+  const result = await callCloudFunction("createBillingPortalSession", {
+    familyId,
+    returnUrl: `${checkoutOrigin()}/app/settings.html?tab=plans&portal=return`,
     flow: nextFlow,
   }, { fallback: "The Stripe billing portal could not be opened. Please try again." });
   if (!result?.url) {
@@ -344,7 +480,11 @@ export async function resumePlusSubscription(session = getSession()) {
     return { mock: true, ok: true, cancelAtPeriodEnd: false };
   }
 
-  const result = await callCloudFunction("resumePlusSubscription", {});
+  const familyId = await resolveFamilyId(session.id);
+  if (!familyId) {
+    throw new Error("A family is required to resume Famielda Plus.");
+  }
+  const result = await callCloudFunction("resumeFamilySubscription", { familyId });
   await refreshSession();
   return result;
 }
@@ -356,12 +496,20 @@ export async function loadBillingSnapshot(session = getSession()) {
   if (!session?.id) {
     return emptySnapshot(session);
   }
-  const result = await callCloudFunction("getBillingSnapshot", {});
+  // Mobile's getSubscriptionCatalog exposes plan metadata only; billing status
+  // is read from the canonical families/{familyId}/subscription/current doc.
+  const catalog = await callCloudFunction("getSubscriptionCatalog", {}).catch(() => null);
   await refreshSession();
-  return result || emptySnapshot(getSession() || session);
+  const familySnapshot = await readFamilyBillingSnapshot(session).catch(() => null);
+  const snapshot = familySnapshot || emptySnapshot(getSession() || session);
+  return catalog ? { ...snapshot, catalog } : snapshot;
 }
 
-export async function finalizePlusCheckout(sessionId, session = getSession()) {
+// Web checkout finalization is owned by mobile's Stripe webhook, which syncs
+// families/{familyId}/subscription/current. Mobile has no callable equivalent
+// for the retired web finalizePlusCheckout (createSubscriptionPaymentSheet
+// creates a new in-app payment sheet instead), so we only refresh locally.
+export async function finalizeCheckoutReturn(sessionId, session = getSession()) {
   if (!usesLiveAuth() || !session?.id) {
     return { ok: false, mock: !usesLiveAuth() };
   }
@@ -369,7 +517,8 @@ export async function finalizePlusCheckout(sessionId, session = getSession()) {
   if (!id.startsWith("cs_")) {
     return { ok: false };
   }
-  return callCloudFunction("finalizePlusCheckout", { sessionId: id });
+  await refreshSession();
+  return { ok: false, sessionId: id, pendingWebhook: true };
 }
 
 function stripQueryParams(keys) {
@@ -401,7 +550,7 @@ export async function handleCheckoutReturn() {
   }
 
   if (checkout === CHECKOUT_RETURN.SUCCESS) {
-    await finalizePlusCheckout(sessionId).catch(() => ({ ok: false }));
+    await finalizeCheckoutReturn(sessionId).catch(() => ({ ok: false }));
     let session = await refreshSession();
     for (let attempt = 0; attempt < 4 && session && !isPlusPlan(session.plan); attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 900));

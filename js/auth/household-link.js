@@ -1,11 +1,12 @@
 /**
  * Resolve the household a Firebase Auth user already belongs to in Firestore.
- * Mobile and web share seniors/{id} and careCircleMembers; the web session
- * only stores one seniorId, so we pick the owned household first.
+ * Mobile and web share seniors/{id} and seniors/{id}/circleMembers; the web
+ * session only stores one seniorId, so we pick the owned household first.
  */
-import { AUTH, CIRCLE_STATUS } from "../config/constants.js";
+import { CIRCLE_STATUS } from "../config/constants.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { seniorsCol } from "../core/firestore-paths.js";
 import { logger } from "../core/logger.js";
 import { updateUserProfile } from "./user-profile.js";
 
@@ -19,57 +20,63 @@ async function firstId(run) {
   }
 }
 
-async function queryIds(collection, constraints, pick) {
-  const db = getFirebaseDb();
+async function queryIds(base, constraints, pick) {
   const sdk = getFirestoreSdk();
-  if (!db || !sdk) return [];
+  if (!sdk) return [];
   const snap = await sdk.getDocs(
-    sdk.query(sdk.collection(db, collection), ...constraints, sdk.limit(QUERY_LIMITS.LOOKUP)),
+    sdk.query(base, ...constraints, sdk.limit(QUERY_LIMITS.LOOKUP)),
   );
   return snap.docs.map((doc) => pick(doc.id, doc.data())).filter(Boolean);
+}
+
+function pickSeniorId(_id, data) {
+  return data.status === CIRCLE_STATUS.REMOVED ? "" : data.seniorId;
 }
 
 export async function findSeniorIdForUser(profile) {
   if (!usesLiveAuth() || !profile?.id) return profile?.seniorId || null;
   if (profile.seniorId) return profile.seniorId;
 
+  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  if (!sdk) return null;
+  if (!db || !sdk) return null;
 
   const owned = await firstId(() => queryIds(
-    AUTH.SENIORS_COLLECTION,
+    seniorsCol(),
     [sdk.where("ownerId", "==", profile.id)],
     (id) => id,
   ));
   if (owned) return owned;
 
   const memberOf = await firstId(() => queryIds(
-    AUTH.SENIORS_COLLECTION,
+    seniorsCol(),
     [sdk.where("memberIds", "array-contains", profile.id)],
     (id) => id,
   ));
   if (memberOf) return memberOf;
 
+  const circleMembers = sdk.collectionGroup(db, "circleMembers");
+
   const byUser = await firstId(() => queryIds(
-    AUTH.CIRCLE_COLLECTION,
+    circleMembers,
     [sdk.where("userId", "==", profile.id)],
-    (_id, data) => (data.status === CIRCLE_STATUS.REMOVED ? "" : data.seniorId),
+    pickSeniorId,
   ));
   if (byUser) return byUser;
 
   const byUid = await firstId(() => queryIds(
-    AUTH.CIRCLE_COLLECTION,
+    circleMembers,
     [sdk.where("uid", "==", profile.id)],
-    (_id, data) => (data.status === CIRCLE_STATUS.REMOVED ? "" : data.seniorId),
+    pickSeniorId,
   ));
   if (byUid) return byUid;
 
   const email = String(profile.email || "").trim().toLowerCase();
   if (!email) return null;
   return firstId(() => queryIds(
-    AUTH.CIRCLE_COLLECTION,
+    circleMembers,
     [sdk.where("email", "==", email)],
-    (_id, data) => (data.status === CIRCLE_STATUS.REMOVED ? "" : data.seniorId),
+    pickSeniorId,
   ));
 }
 

@@ -1,5 +1,4 @@
 import {
-  AUTH,
   CIRCLE_STATUS,
   CONVERSATION_TYPES,
   NOTIFICATION_TYPES,
@@ -31,8 +30,8 @@ import { createConversation } from "../models/conversation.js";
 import { createMessage } from "../models/message.js";
 import { mockConversations, mockMessages } from "./mock-data.js";
 import { storage } from "../core/storage.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { getQueryDocs, queryPage } from "../core/query.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { conversationsCol, messagesCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession } from "../auth/session.js";
 import { getSeniorForUser } from "./senior-service.js";
@@ -69,9 +68,29 @@ function conversationFrom(data) {
   });
 }
 
+function messageBody(data = {}) {
+  if (data.body != null && data.body !== "") return data.body;
+  if (data.text != null && data.text !== "") return data.text;
+  return data.messageType ?? "";
+}
+
+function messageConversationId(data = {}) {
+  if (data.conversationId) return data.conversationId;
+  if (data.seniorId && data.type === CONVERSATION_TYPES.CIRCLE) {
+    return circleConversationId(data.seniorId);
+  }
+  return "";
+}
+
+function circleConversationId(seniorId) {
+  return seniorId ? `${seniorId}_circle` : "";
+}
+
 function messageFrom(data) {
   return createMessage({
     ...data,
+    body: messageBody(data),
+    conversationId: messageConversationId(data),
     createdAt: toIso(data.createdAt) || nowIso(),
   });
 }
@@ -158,8 +177,29 @@ function localMessages(filter = {}) {
     });
 }
 
-async function collectionDocs(collection, constraints = [], options = {}) {
-  return getQueryDocs(collection, constraints, { limit: QUERY_LIMITS.PAGE, ...options });
+async function collectionDocs(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.PAGE;
+  const parts = [...constraints];
+  if (options.startAfter) parts.push(sdk.startAfter(options.startAfter));
+  parts.push(sdk.limit(limit));
+  const query = sdk.query(collectionRef, ...parts);
+  const snap = await sdk.getDocs(query);
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+}
+
+async function collectionPage(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.PAGE;
+  const parts = [...constraints];
+  if (options.startAfter) parts.push(sdk.startAfter(options.startAfter));
+  parts.push(sdk.limit(limit));
+  const query = sdk.query(collectionRef, ...parts);
+  const snap = await sdk.getDocs(query);
+  const snapshots = snap.docs;
+  const items = snapshots.map((doc) => ({ id: doc.id, ...doc.data() }));
+  const lastDoc = snapshots[snapshots.length - 1] || null;
+  return { items, snapshots, lastDoc, cursor: lastDoc?.id || null, hasMore: snapshots.length >= limit, limit };
 }
 
 async function readConversations(filter = {}) {
@@ -171,7 +211,7 @@ async function readConversations(filter = {}) {
   if (filter.participantKey && !filter.pairKey) {
     constraints.push(sdk.where("participantKeys", "array-contains", filter.participantKey));
   }
-  const docs = await collectionDocs(AUTH.CONVERSATIONS_COLLECTION, constraints, { limit: QUERY_LIMITS.WORKSPACE });
+  const docs = await collectionDocs(conversationsCol(), constraints, { limit: QUERY_LIMITS.WORKSPACE });
   return docs.map((item) => conversationFrom(item)).filter((item) => {
     if (filter.seniorId && item.seniorId !== filter.seniorId) return false;
     if (filter.pairKey && item.pairKey !== filter.pairKey) return false;
@@ -182,9 +222,8 @@ async function readConversations(filter = {}) {
 async function readConversationById(id) {
   if (!id) return null;
   if (!usesLiveAuth()) return localConversations().find((item) => item.id === id) ?? null;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.CONVERSATIONS_COLLECTION, id));
+  const snap = await sdk.getDoc(sdk.doc(conversationsCol(), id));
   if (!snap.exists()) return null;
   return conversationFrom({ id: snap.id, ...snap.data() });
 }
@@ -196,37 +235,57 @@ async function readMessages(filter = {}) {
     return { items: items.slice(-limit), hasMore: items.length > limit };
   }
   const sdk = getFirestoreSdk();
-  const constraints = [];
-  if (filter.conversationId) constraints.push(sdk.where("conversationId", "==", filter.conversationId));
-  else if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
   const limit = filter.limit ?? QUERY_LIMITS.PAGE;
-  try {
-    const page = await queryPage(AUTH.MESSAGES_COLLECTION, [
-      ...constraints,
-      sdk.orderBy("createdAt", "desc"),
-    ], { limit, startAfter: filter.startAfter, cache: false });
-    const items = page.items.map((item) => messageFrom(item)).reverse();
-    return { items, hasMore: page.hasMore, lastDoc: page.lastDoc };
-  } catch {
-    const docs = await collectionDocs(AUTH.MESSAGES_COLLECTION, constraints, { limit });
+
+  if (!filter.conversationId) {
+    const constraints = filter.seniorId ? [sdk.where("seniorId", "==", filter.seniorId)] : [];
+    const docs = await collectionDocs(messagesCol(), constraints, { limit });
     const items = docs.map((item) => messageFrom(item)).filter((item) => {
-      if (filter.conversationId && item.conversationId !== filter.conversationId) return false;
       if (filter.seniorId && item.seniorId !== filter.seniorId) return false;
       return true;
     }).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
     return { items, hasMore: items.length >= limit };
   }
+
+  const constraints = [sdk.where("conversationId", "==", filter.conversationId)];
+  let page;
+  try {
+    page = await collectionPage(messagesCol(), [
+      ...constraints,
+      sdk.orderBy("createdAt", "desc"),
+    ], { limit, startAfter: filter.startAfter });
+    page.items = page.items.map((item) => messageFrom(item));
+  } catch {
+    const docs = await collectionDocs(messagesCol(), constraints, { limit });
+    const mapped = docs.map((item) => messageFrom(item))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    page = { items: mapped, lastDoc: null, hasMore: mapped.length >= limit };
+  }
+
+  let items = page.items.slice().reverse();
+  const aliasId = filter.aliasConversationId
+    || (filter.seniorId ? circleConversationId(filter.seniorId) : "");
+  if (aliasId && aliasId !== filter.conversationId && !filter.startAfter) {
+    const aliasDocs = await collectionDocs(messagesCol(), [
+      sdk.where("conversationId", "==", aliasId),
+    ], { limit });
+    const seen = new Set(items.map((item) => item.id));
+    items = items
+      .concat(aliasDocs.map((item) => messageFrom(item)).filter((item) => !seen.has(item.id)))
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  }
+  return { items, hasMore: page.hasMore || items.length >= limit, lastDoc: page.lastDoc };
 }
 
 async function saveConversationRecord(conversation) {
   const record = conversationFrom({ ...conversation, updatedAt: nowIso() });
   if (!usesLiveAuth()) return conversationFrom(writeLocalRecord(CONVERSATIONS_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = conversationsCol();
   const ref = record.id
-    ? sdk.doc(db, AUTH.CONVERSATIONS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.CONVERSATIONS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = { ...payload, updatedAt: sdk.serverTimestamp() };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
@@ -238,11 +297,11 @@ async function saveMessageRecord(message) {
   const record = messageFrom(message);
   if (!usesLiveAuth()) return messageFrom(writeLocalRecord(MESSAGES_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = messagesCol();
   const ref = record.id
-    ? sdk.doc(db, AUTH.MESSAGES_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.MESSAGES_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = { ...payload };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
@@ -288,7 +347,8 @@ function directTitle(other) {
 
 async function ensureCircleConversation(ctx) {
   const pairKey = circlePairKey(ctx.senior.id);
-  const existing = (await readConversations({ seniorId: ctx.senior.id, pairKey }))[0]
+  const existing = await readConversationById(circleConversationId(ctx.senior.id))
+    ?? (await readConversations({ seniorId: ctx.senior.id, pairKey }))[0]
     ?? (await readConversations({ seniorId: ctx.senior.id })).find((item) => item.type === CONVERSATION_TYPES.CIRCLE);
   const participantKeys = conversationParticipantKeys(ctx.members);
   const participantIds = conversationParticipantIds(ctx.members);
@@ -298,6 +358,8 @@ async function ensureCircleConversation(ctx) {
     if (sameKeys) return existing;
     return saveConversationRecord({
       ...existing,
+      type: CONVERSATION_TYPES.CIRCLE,
+      pairKey,
       participantKeys,
       participantIds,
       memberIds,
@@ -472,6 +534,9 @@ export async function getConversationThread(conversationId, session = getSession
   }
   const page = await readMessages({
     conversationId: conversation.id,
+    aliasConversationId: conversation.type === CONVERSATION_TYPES.CIRCLE
+      ? circleConversationId(conversation.seniorId)
+      : "",
     limit: options.limit ?? QUERY_LIMITS.PAGE,
     startAfter: options.startAfter,
   });
@@ -571,10 +636,15 @@ export async function listMessages(seniorId) {
   try {
     const ctx = await loadContext(session);
     if (ctx.senior.id !== seniorId && session.role !== ROLES.ADMIN) return [];
-    const circle = (await readConversations({ seniorId, pairKey: circlePairKey(seniorId) }))[0]
+    const circle = await readConversationById(circleConversationId(seniorId))
+      ?? (await readConversations({ seniorId, pairKey: circlePairKey(seniorId) }))[0]
       ?? (await readConversations({ seniorId })).find((item) => item.type === CONVERSATION_TYPES.CIRCLE);
     if (!circle) return [];
-    return (await readMessages({ conversationId: circle.id, limit: QUERY_LIMITS.PAGE })).items
+    return (await readMessages({
+      conversationId: circle.id,
+      aliasConversationId: circleConversationId(seniorId),
+      limit: QUERY_LIMITS.PAGE,
+    })).items
       .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   } catch {
     return [];

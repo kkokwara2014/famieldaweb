@@ -1,5 +1,4 @@
 import {
-  AUTH,
   ACTIVITY_TYPES,
   CARE_HISTORY_KINDS,
   CIRCLE_STATUS,
@@ -37,14 +36,13 @@ import { mockDocuments } from "./mock-data.js";
 import { storage } from "../core/storage.js";
 import {
   ensureFirebaseStorage,
-  getFirebaseDb,
   getFirebaseStorage,
   getFirestoreSdk,
   getStorageSdk,
   usesLiveAuth,
 } from "../core/firebase.js";
 import { getSession } from "../auth/session.js";
-import { getQueryDocs } from "../core/query.js";
+import { documentsCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSeniorForUser } from "./senior-service.js";
 import { listCareCircle } from "./care-circle-service.js";
@@ -199,8 +197,12 @@ async function deleteLocalFile(id) {
   }
 }
 
-async function collectionDocs(collection, constraints = [], options = {}) {
-  return getQueryDocs(collection, constraints, { limit: QUERY_LIMITS.PAGE, ...options });
+async function collectionDocs(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.PAGE;
+  const query = sdk.query(collectionRef, ...constraints, sdk.limit(limit));
+  const snap = await sdk.getDocs(query);
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 async function readDocuments(filter = {}, allowedVisibilities = null) {
@@ -210,32 +212,22 @@ async function readDocuments(filter = {}, allowedVisibilities = null) {
   if (!usesLiveAuth()) {
     return localDocuments(filter).filter((item) => visibilities.includes(item.visibility));
   }
+  if (!filter.seniorId) return [];
   const sdk = getFirestoreSdk();
-  const constraints = [];
-  if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
-  if (visibilities.length && visibilities.length < Object.values(DOCUMENT_VISIBILITY).length) {
-    constraints.push(sdk.where("visibility", "in", visibilities));
-  }
   try {
-    const docs = await collectionDocs(AUTH.DOCUMENTS_COLLECTION, [...constraints, sdk.orderBy("updatedAt", "desc")]);
+    const docs = await collectionDocs(documentsCol(filter.seniorId), [sdk.orderBy("updatedAt", "desc")]);
     return docs.map((item) => documentFrom(item)).filter((item) => visibilities.includes(item.visibility));
   } catch {
-    const docs = await collectionDocs(AUTH.DOCUMENTS_COLLECTION, constraints);
-    return docs
-      .map((item) => documentFrom(item))
-      .filter((item) => {
-        if (filter.seniorId && item.seniorId !== filter.seniorId) return false;
-        return visibilities.includes(item.visibility);
-      });
+    const docs = await collectionDocs(documentsCol(filter.seniorId));
+    return docs.map((item) => documentFrom(item)).filter((item) => visibilities.includes(item.visibility));
   }
 }
 
-async function readDocumentById(id) {
-  if (!id) return null;
+async function readDocumentById(id, seniorId) {
+  if (!id || !seniorId) return null;
   if (!usesLiveAuth()) return localDocuments().find((item) => item.id === id) ?? null;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.DOCUMENTS_COLLECTION, id));
+  const snap = await sdk.getDoc(sdk.doc(documentsCol(seniorId), id));
   if (!snap.exists()) return null;
   return documentFrom({ id: snap.id, ...snap.data() });
 }
@@ -244,11 +236,11 @@ async function saveDocumentRecord(document) {
   const record = documentFrom({ ...document, updatedAt: nowIso() });
   if (!usesLiveAuth()) return documentFrom(writeLocalRecord(record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = documentsCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.DOCUMENTS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.DOCUMENTS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = { ...payload, updatedAt: sdk.serverTimestamp() };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
@@ -256,14 +248,14 @@ async function saveDocumentRecord(document) {
   return documentFrom({ ...record, id: ref.id });
 }
 
-async function deleteDocumentRecord(id) {
+async function deleteDocumentRecord(id, seniorId) {
   if (!usesLiveAuth()) {
     removeLocalRecord(id);
     return;
   }
-  const db = getFirebaseDb();
+  if (!id || !seniorId) return;
   const sdk = getFirestoreSdk();
-  await sdk.deleteDoc(sdk.doc(db, AUTH.DOCUMENTS_COLLECTION, id));
+  await sdk.deleteDoc(sdk.doc(documentsCol(seniorId), id));
 }
 
 async function uploadPrivateFile(path, file) {
@@ -481,7 +473,7 @@ export async function saveDocument(input = {}, session = getSession()) {
   assertCanManage(ctx);
 
   const existing = input.documentId || input.id
-    ? await readDocumentById(input.documentId || input.id)
+    ? await readDocumentById(input.documentId || input.id, ctx.senior.id)
     : null;
   if ((input.documentId || input.id) && !existing) {
     throw new Error("That document is no longer on file.");
@@ -553,7 +545,7 @@ export async function saveDocument(input = {}, session = getSession()) {
 export async function deleteDocument(documentId, session = getSession()) {
   const ctx = await loadContext(session);
   assertPlus(ctx);
-  const existing = await readDocumentById(documentId);
+  const existing = await readDocumentById(documentId, ctx.senior.id);
   if (!existing) throw new Error("That document is no longer on file.");
   if (existing.seniorId !== ctx.senior.id) {
     throw new Error("That document belongs to another household.");
@@ -567,7 +559,7 @@ export async function deleteDocument(documentId, session = getSession()) {
   } else {
     await deleteLocalFile(existing.id);
   }
-  await deleteDocumentRecord(existing.id);
+  await deleteDocumentRecord(existing.id, ctx.senior.id);
 
   await logDocumentActivity(
     "Document removed",
@@ -580,7 +572,7 @@ export async function deleteDocument(documentId, session = getSession()) {
 export async function getDocumentBlob(documentId, session = getSession()) {
   const ctx = await loadContext(session);
   assertPlus(ctx);
-  const existing = await readDocumentById(documentId);
+  const existing = await readDocumentById(documentId, ctx.senior.id);
   if (!existing) throw new Error("That document is no longer on file.");
   if (existing.seniorId !== ctx.senior.id) {
     throw new Error("That document belongs to another household.");

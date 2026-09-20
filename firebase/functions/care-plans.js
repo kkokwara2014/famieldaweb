@@ -1,5 +1,5 @@
 const { HttpsError } = require("firebase-functions/v2/https");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue, FieldPath } = require("firebase-admin/firestore");
 
 const USERS = "users";
 const SENIORS = "seniors";
@@ -16,10 +16,59 @@ const TASK_STATUS = {
   OPEN: "open",
   COMPLETED: "completed",
   SKIPPED: "skipped",
+  MISSED: "missed",
 };
 
 function db() {
   return getFirestore();
+}
+
+// Canonical placement is under seniors/{seniorId}. Falls back to the
+// pre-migration top-level collections when no senior id is known.
+function plansCol(seniorId) {
+  return seniorId
+    ? db().collection(`${SENIORS}/${seniorId}/${PLANS}`)
+    : db().collection(PLANS);
+}
+
+function planDoc(seniorId, planId) {
+  return seniorId
+    ? db().doc(`${SENIORS}/${seniorId}/${PLANS}/${planId}`)
+    : db().doc(`${PLANS}/${planId}`);
+}
+
+function tasksCol(seniorId) {
+  return seniorId
+    ? db().collection(`${SENIORS}/${seniorId}/${TASKS}`)
+    : db().collection(TASKS);
+}
+
+function taskDoc(seniorId, taskId) {
+  return seniorId
+    ? db().doc(`${SENIORS}/${seniorId}/${TASKS}/${taskId}`)
+    : db().doc(`${TASKS}/${taskId}`);
+}
+
+function completionsCol(seniorId) {
+  return seniorId
+    ? db().collection(`${SENIORS}/${seniorId}/${COMPLETIONS}`)
+    : db().collection(COMPLETIONS);
+}
+
+async function loadTask(taskId) {
+  if (!taskId) return null;
+  const group = await db().collectionGroup(TASKS)
+    .where(FieldPath.documentId(), "==", taskId)
+    .limit(1)
+    .get();
+  if (!group.empty) {
+    const doc = group.docs[0];
+    return { id: doc.id, ...doc.data(), ref: doc.ref };
+  }
+  // Backward-compatible: pre-migration top-level carePlanTasks.
+  const legacy = await db().doc(`${TASKS}/${taskId}`).get();
+  if (legacy.exists) return { id: legacy.id, ...legacy.data(), ref: legacy.ref };
+  return null;
 }
 
 function requireUid(request) {
@@ -103,10 +152,17 @@ exports.saveCarePlan = async (request) => {
   const title = String(input.title || "").trim();
   if (!title) throw new HttpsError("invalid-argument", "Give this care plan a name.");
   const status = PLAN_STATUS.includes(input.status) ? input.status : "active";
-  const ref = input.planId ? db().doc(`${PLANS}/${input.planId}`) : db().collection(PLANS).doc();
+  const ref = input.planId
+    ? planDoc(senior.id, input.planId)
+    : plansCol(senior.id).doc();
   const existing = input.planId ? await ref.get() : null;
   if (input.planId && (!existing.exists || existing.data().seniorId !== senior.id)) {
-    throw new HttpsError("not-found", "That care plan could not be found.");
+    // Backward-compatible: accept a pre-migration top-level plan, then migrate
+    // it into the canonical subcollection on write.
+    const legacy = await db().doc(`${PLANS}/${input.planId}`).get();
+    if (!legacy.exists || legacy.data().seniorId !== senior.id) {
+      throw new HttpsError("not-found", "That care plan could not be found.");
+    }
   }
   const payload = {
     seniorId: senior.id,
@@ -138,20 +194,31 @@ exports.assignCarePlanTask = async (request) => {
   }
   const title = String(input.title || "").trim();
   if (!title) throw new HttpsError("invalid-argument", "Give this task a name.");
-  const planSnap = await db().doc(`${PLANS}/${input.planId}`).get();
+  const planSnap = await planDoc(senior.id, input.planId).get();
   if (!planSnap.exists || planSnap.data().seniorId !== senior.id) {
-    throw new HttpsError("not-found", "Choose a care plan before assigning a task.");
+    // Backward-compatible: accept a pre-migration top-level plan.
+    const legacyPlan = await db().doc(`${PLANS}/${input.planId}`).get();
+    if (!legacyPlan.exists || legacyPlan.data().seniorId !== senior.id) {
+      throw new HttpsError("not-found", "Choose a care plan before assigning a task.");
+    }
   }
   const frequency = FREQUENCIES.includes(input.frequency) ? input.frequency : "daily";
   const dueDate = input.dueDate || (frequency === "as_needed" ? null : todayIso());
   const priority = PRIORITIES.includes(input.priority) ? input.priority : "medium";
-  const ref = input.taskId ? db().doc(`${TASKS}/${input.taskId}`) : db().collection(TASKS).doc();
+  const ref = input.taskId
+    ? taskDoc(senior.id, input.taskId)
+    : tasksCol(senior.id).doc();
   const existing = input.taskId ? await ref.get() : null;
   if (input.taskId && (!existing.exists || existing.data().seniorId !== senior.id)) {
-    throw new HttpsError("not-found", "That care task could not be found.");
+    // Backward-compatible: accept a pre-migration top-level task, then migrate
+    // it into the canonical subcollection on write.
+    const legacyTask = await db().doc(`${TASKS}/${input.taskId}`).get();
+    if (!legacyTask.exists || legacyTask.data().seniorId !== senior.id) {
+      throw new HttpsError("not-found", "That care task could not be found.");
+    }
   }
   const payload = {
-    planId: planSnap.id,
+    planId: input.planId,
     seniorId: senior.id,
     title,
     notes: String(input.notes || "").trim(),
@@ -202,18 +269,17 @@ exports.completeCarePlanTask = async (request) => {
   const input = request.data || {};
   const uid = requireUid(request);
   const user = await loadUser(uid);
-  const taskRef = db().doc(`${TASKS}/${input.taskId}`);
-  const taskSnap = await taskRef.get();
-  if (!taskSnap.exists) throw new HttpsError("not-found", "That care task could not be found.");
-  const task = { id: taskSnap.id, ...taskSnap.data() };
+  const task = await loadTask(input.taskId);
+  if (!task) throw new HttpsError("not-found", "That care task could not be found.");
   const senior = await loadSenior(task.seniorId);
   const assigned = task.assignedCaregiverUserId === uid
     || String(task.assignedCaregiverEmail || "").trim().toLowerCase() === String(user.email || "").trim().toLowerCase();
   if (!isMember(senior, uid) && !assigned) {
     throw new HttpsError("permission-denied", "You can only complete tasks assigned to you.");
   }
+  const taskRef = taskDoc(task.seniorId, task.id);
   const outcome = input.outcome === TASK_STATUS.SKIPPED ? TASK_STATUS.SKIPPED : TASK_STATUS.COMPLETED;
-  const completionRef = db().collection(COMPLETIONS).doc();
+  const completionRef = completionsCol(task.seniorId).doc();
   const now = new Date();
   const next = {
     lastCompletedAt: FieldValue.serverTimestamp(),
@@ -275,20 +341,19 @@ exports.addCareTaskNote = async (request) => {
   const input = request.data || {};
   const uid = requireUid(request);
   const user = await loadUser(uid);
-  const taskRef = db().doc(`${TASKS}/${input.taskId}`);
-  const taskSnap = await taskRef.get();
-  if (!taskSnap.exists) throw new HttpsError("not-found", "That care task could not be found.");
-  const task = { id: taskSnap.id, ...taskSnap.data() };
+  const task = await loadTask(input.taskId);
+  if (!task) throw new HttpsError("not-found", "That care task could not be found.");
   const senior = await loadSenior(task.seniorId);
   const assigned = task.assignedCaregiverUserId === uid
     || String(task.assignedCaregiverEmail || "").trim().toLowerCase() === String(user.email || "").trim().toLowerCase();
   if (!isMember(senior, uid) && !assigned) {
     throw new HttpsError("permission-denied", "You need permission to add a note on this task.");
   }
+  const taskRef = taskDoc(task.seniorId, task.id);
   const body = String(input.body || "").trim();
   if (!body) throw new HttpsError("invalid-argument", "Write a short note before saving.");
   const note = {
-    id: db().collection(TASKS).doc().id,
+    id: tasksCol(task.seniorId).doc().id,
     body,
     createdAt: new Date().toISOString(),
     createdBy: uid,

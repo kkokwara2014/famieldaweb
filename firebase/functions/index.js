@@ -34,7 +34,6 @@ initializeApp();
 getFirestore().settings({ ignoreUndefinedProperties: true });
 
 const protect = security.protect;
-const CALLABLE = { invoker: "public" };
 
 exports.health = onCall({ invoker: "public" }, async () => ({
   ok: true,
@@ -42,108 +41,11 @@ exports.health = onCall({ invoker: "public" }, async () => ({
   at: new Date().toISOString(),
 }));
 
-exports.inviteCareCircleMember = onCall(CALLABLE, protect(careCircle.inviteCareCircleMember, {
-  rateLimit: "invite",
-  audit: "circle.invite",
-  sensitive: true,
-  targetType: "invite",
-}));
 exports.resolveCareCircleInvite = onCall({ invoker: "public" }, protect(careCircle.resolveCareCircleInvite, {
   public: true,
   rateLimit: "invitePreview",
 }));
-exports.acceptCareCircleInvite = onCall(protect(careCircle.acceptCareCircleInvite, {
-  rateLimit: "invite",
-  audit: "circle.accept",
-  sensitive: true,
-  targetType: "invite",
-}));
-exports.declineCareCircleInvite = onCall(protect(careCircle.declineCareCircleInvite, {
-  rateLimit: "invite",
-  audit: "circle.decline",
-  sensitive: true,
-  targetType: "invite",
-}));
-exports.removeCareCircleMember = onCall(protect(careCircle.removeCareCircleMember, {
-  rateLimit: "invite",
-  audit: "circle.remove",
-  sensitive: true,
-  targetType: "member",
-}));
-exports.updateCareCircleMember = onCall(protect(careCircle.updateCareCircleMember, {
-  rateLimit: "invite",
-  audit: "circle.update",
-  sensitive: true,
-  targetType: "member",
-}));
-exports.revokeCareCircleInvite = onCall(protect(careCircle.revokeCareCircleInvite, {
-  rateLimit: "invite",
-  audit: "circle.revoke",
-  sensitive: true,
-  targetType: "invite",
-}));
-exports.resendCareCircleInvite = onCall(protect(careCircle.resendCareCircleInvite, {
-  rateLimit: "invite",
-  audit: "circle.resend",
-  targetType: "invite",
-}));
-exports.ensureOwnerMembership = onCall(protect(careCircle.ensureOwnerMembership, {
-  rateLimit: "default",
-}));
 
-exports.previewScheduleConflict = onCall(protect(scheduling.previewScheduleConflict, {
-  rateLimit: "schedule",
-}));
-exports.requestScheduleVisit = onCall(protect(scheduling.requestScheduleVisit, {
-  rateLimit: "schedule",
-  audit: "schedule.request",
-  sensitive: true,
-  targetType: "visit",
-}));
-exports.acceptScheduleVisit = onCall(protect(scheduling.acceptScheduleVisit, {
-  rateLimit: "schedule",
-  audit: "schedule.accept",
-  targetType: "visit",
-}));
-exports.declineScheduleVisit = onCall(protect(scheduling.declineScheduleVisit, {
-  rateLimit: "schedule",
-  audit: "schedule.decline",
-  targetType: "visit",
-}));
-exports.cancelScheduleVisit = onCall(protect(scheduling.cancelScheduleVisit, {
-  rateLimit: "schedule",
-  audit: "schedule.cancel",
-  sensitive: true,
-  targetType: "visit",
-}));
-exports.modifyScheduleVisit = onCall(protect(scheduling.modifyScheduleVisit, {
-  rateLimit: "schedule",
-  audit: "schedule.modify",
-  targetType: "visit",
-}));
-exports.extendScheduleVisit = onCall(protect(scheduling.extendScheduleVisit, {
-  rateLimit: "schedule",
-  audit: "schedule.extend",
-  targetType: "visit",
-}));
-exports.checkInVisit = onCall(protect(scheduling.checkInVisit, {
-  rateLimit: "schedule",
-  audit: "schedule.checkin",
-  targetType: "visit",
-}));
-exports.checkOutVisit = onCall(protect(scheduling.checkOutVisit, {
-  rateLimit: "schedule",
-  audit: "schedule.checkout",
-  targetType: "visit",
-}));
-exports.addVisitNote = onCall(protect(scheduling.addVisitNote, {
-  rateLimit: "schedule",
-}));
-exports.submitVisitReport = onCall(protect(scheduling.submitVisitReport, {
-  rateLimit: "schedule",
-  audit: "schedule.report",
-  targetType: "visit",
-}));
 exports.saveProfessionalAvailability = onCall(protect(scheduling.saveProfessionalAvailability, {
   rateLimit: "schedule",
 }));
@@ -154,42 +56,6 @@ exports.savePractitionerAvailability = onCall(protect(scheduling.savePractitione
   rateLimit: "schedule",
 }));
 
-exports.saveCarePlan = onCall(protect(carePlans.saveCarePlan, {
-  rateLimit: "care",
-  audit: "care.plan.save",
-}));
-exports.assignCarePlanTask = onCall(protect(carePlans.assignCarePlanTask, {
-  rateLimit: "care",
-  audit: "care.task.assign",
-}));
-exports.completeCarePlanTask = onCall(protect(carePlans.completeCarePlanTask, {
-  rateLimit: "care",
-  audit: "care.task.complete",
-}));
-exports.addCareTaskNote = onCall(protect(carePlans.addCareTaskNote, {
-  rateLimit: "care",
-}));
-exports.saveAppointment = onCall(protect(appointments.saveAppointment, {
-  rateLimit: "care",
-  audit: "care.appointment.save",
-}));
-exports.cancelAppointment = onCall(protect(appointments.cancelAppointment, {
-  rateLimit: "care",
-  audit: "care.appointment.cancel",
-  sensitive: true,
-}));
-exports.updateAppointmentStatus = onCall(protect(appointments.updateAppointmentStatus, {
-  rateLimit: "care",
-}));
-exports.saveMedication = onCall(protect(medications.saveMedication, {
-  rateLimit: "care",
-  audit: "care.medication.save",
-  sensitive: true,
-}));
-exports.logMedicationDose = onCall(protect(medications.logMedicationDose, {
-  rateLimit: "care",
-  audit: "care.medication.dose",
-}));
 exports.onCareDocumentDeleted = documents.onCareDocumentDeleted;
 exports.onCareMessageCreated = messages.onCareMessageCreated;
 
@@ -273,27 +139,17 @@ exports.completeFamilyReferral = onCall(protect(referrals.completeFamilyReferral
 }));
 
 exports.onNotificationCreated = onDocumentCreated(
-  "notifications/{notificationId}",
+  "users/{userId}/notifications/{notificationId}",
   notifications.onNotificationCreated
 );
 
 exports.dispatchDueReminders = onSchedule("every 15 minutes", async () => {
   const started = Date.now();
   try {
-    const db = getFirestore();
-    const now = new Date();
-    const due = await db
-      .collection("scheduleEvents")
-      .where("reminderAt", "<=", now)
-      .where("reminderSent", "==", false)
-      .limit(50)
-      .get();
-
     const appointmentsDue = await appointments.dispatchAppointmentReminders();
     const medicationsDue = await medications.dispatchMedicationReminders();
     const durationMs = Date.now() - started;
     logger.info("Due reminders scanned", {
-      count: due.size,
       appointments: appointmentsDue,
       medications: medicationsDue,
       durationMs,
@@ -317,28 +173,6 @@ exports.dispatchDueReminders = onSchedule("every 15 minutes", async () => {
     throw error;
   }
 });
-
-exports.createPlusCheckout = onCall(
-  stripeBilling.checkoutOptions,
-  protect(stripeBilling.createPlusCheckout, { rateLimit: "billing", audit: "billing.checkout", sensitive: true }),
-);
-exports.createBillingPortal = onCall(
-  stripeBilling.checkoutOptions,
-  protect(stripeBilling.createBillingPortal, { rateLimit: "billing", audit: "billing.portal", sensitive: true }),
-);
-exports.resumePlusSubscription = onCall(
-  stripeBilling.checkoutOptions,
-  protect(stripeBilling.resumePlusSubscription, { rateLimit: "billing", audit: "billing.resume", sensitive: true }),
-);
-exports.getBillingSnapshot = onCall(
-  stripeBilling.checkoutOptions,
-  protect(stripeBilling.getBillingSnapshot, { rateLimit: "billing" }),
-);
-exports.finalizePlusCheckout = onCall(
-  stripeBilling.checkoutOptions,
-  protect(stripeBilling.finalizePlusCheckout, { rateLimit: "billing", audit: "billing.finalize" }),
-);
-exports.stripeWebhook = onRequest(stripeBilling.webhookOptions, stripeBilling.stripeWebhook);
 
 const adminProtect = (handler, extra = {}) => protect(handler, { admin: true, rateLimit: "admin", ...extra });
 
@@ -411,3 +245,60 @@ exports.onAuthUserDeleted = functionsV1.auth.user().onDelete(async (user) => {
   await security.writeSystemAudit("user.deleted", { targetId: user.uid, sensitive: true });
   logger.info("Removed Famielda profile for deleted Auth user", { uid: user.uid });
 });
+
+exports.saveCarePlan = onCall(protect(carePlans.saveCarePlan, {
+  rateLimit: "care",
+  audit: "care.plan.save",
+}));
+exports.assignCarePlanTask = onCall(protect(carePlans.assignCarePlanTask, {
+  rateLimit: "care",
+  audit: "care.task.assign",
+}));
+exports.completeCarePlanTask = onCall(protect(carePlans.completeCarePlanTask, {
+  rateLimit: "care",
+  audit: "care.task.complete",
+}));
+exports.addCareTaskNote = onCall(protect(carePlans.addCareTaskNote, {
+  rateLimit: "care",
+}));
+exports.saveAppointment = onCall(protect(appointments.saveAppointment, {
+  rateLimit: "care",
+  audit: "care.appointment.save",
+}));
+exports.cancelAppointment = onCall(protect(appointments.cancelAppointment, {
+  rateLimit: "care",
+  audit: "care.appointment.cancel",
+  sensitive: true,
+}));
+exports.updateAppointmentStatus = onCall(protect(appointments.updateAppointmentStatus, {
+  rateLimit: "care",
+}));
+exports.saveMedication = onCall(protect(medications.saveMedication, {
+  rateLimit: "care",
+  audit: "care.medication.save",
+  sensitive: true,
+}));
+exports.logMedicationDose = onCall(protect(medications.logMedicationDose, {
+  rateLimit: "care",
+  audit: "care.medication.dose",
+}));
+exports.createPlusCheckout = onCall(
+  stripeBilling.checkoutOptions,
+  protect(stripeBilling.createPlusCheckout, { rateLimit: "billing", audit: "billing.checkout", sensitive: true }),
+);
+exports.createBillingPortal = onCall(
+  stripeBilling.checkoutOptions,
+  protect(stripeBilling.createBillingPortal, { rateLimit: "billing", audit: "billing.portal", sensitive: true }),
+);
+exports.resumePlusSubscription = onCall(
+  stripeBilling.checkoutOptions,
+  protect(stripeBilling.resumePlusSubscription, { rateLimit: "billing", audit: "billing.resume", sensitive: true }),
+);
+exports.getBillingSnapshot = onCall(
+  stripeBilling.checkoutOptions,
+  protect(stripeBilling.getBillingSnapshot, { rateLimit: "billing" }),
+);
+exports.finalizePlusCheckout = onCall(
+  stripeBilling.checkoutOptions,
+  protect(stripeBilling.finalizePlusCheckout, { rateLimit: "billing", audit: "billing.finalize" }),
+);

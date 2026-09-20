@@ -1,4 +1,4 @@
-import { AUTH, CARE_CIRCLE_ROLES, CIRCLE_KINDS, ROLES } from "../config/constants.js";
+import { CARE_CIRCLE_ROLES, CIRCLE_KINDS, ROLES, SUBSCRIPTION_PLANS } from "../config/constants.js";
 import { occupiesSeat } from "../config/care-circle.js";
 import {
   ENTITLEMENT_MESSAGES,
@@ -14,7 +14,9 @@ import {
 } from "../config/entitlements.js";
 import { getSession } from "../auth/session.js";
 import { getMockUser } from "../auth/auth-service.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { familySubscriptionDoc, familyUsageDoc, userDoc } from "../core/firestore-paths.js";
+import { resolveFamilyId } from "./user-service.js";
 
 export {
   ENTITLEMENT_MESSAGES,
@@ -241,23 +243,49 @@ export async function resolveHouseholdPlan({ session = getSession(), senior, mem
   }
 
   try {
-    const db = getFirebaseDb();
     const sdk = getFirestoreSdk();
-    const snap = await sdk.getDoc(sdk.doc(db, AUTH.USERS_COLLECTION, senior.ownerId));
+    const familyId = senior.familyId || await resolveFamilyId(senior.ownerId);
+    if (familyId) {
+      const familySnap = await sdk.getDoc(familySubscriptionDoc(familyId));
+      if (familySnap.exists()) {
+        const data = familySnap.data() || {};
+        const plan = data.plan || (data.plusEntitled ? SUBSCRIPTION_PLANS.PLUS : "");
+        if (plan) return plan;
+      }
+    }
+    const snap = await sdk.getDoc(userDoc(senior.ownerId));
     return snap.exists() ? snap.data()?.plan ?? session?.plan : session?.plan;
   } catch {
     return session?.plan;
   }
 }
 
+// Canonical server-written usage counters for a family. Returns null when the
+// family has no usage document so callers can fall back to local seat counting.
+export async function loadFamilyUsage(familyId) {
+  const id = String(familyId || "").trim();
+  if (!id || !usesLiveAuth()) return null;
+  const sdk = getFirestoreSdk();
+  if (!sdk) return null;
+  try {
+    const snap = await sdk.getDoc(familyUsageDoc(id));
+    return snap.exists() ? snap.data() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function householdContext({ session = getSession(), senior, members = [] } = {}) {
   const planId = await resolveHouseholdPlan({ session, senior, members });
+  const familyId = senior?.familyId || session?.familyId || null;
   return {
     session,
     senior,
     members,
     planId,
     ownerPlan: planId,
+    familyId,
+    familyUsage: await loadFamilyUsage(familyId),
     entitlements: entitlementsFor(planId),
     usage: circleUsage({ planId, members }),
   };

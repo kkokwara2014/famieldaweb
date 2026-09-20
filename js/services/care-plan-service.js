@@ -1,5 +1,4 @@
 import {
-  AUTH,
   ACTIVITY_TYPES,
   CARE_HISTORY_KINDS,
   CARE_PLAN_STATUS,
@@ -33,8 +32,8 @@ import {
 import { createCarePlan, createCarePlanCompletion, createCarePlanTask, createCareTaskNote } from "../models/care-plan.js";
 import { mockCarePlanCompletions, mockCarePlans, mockCarePlanTasks } from "./mock-data.js";
 import { storage } from "../core/storage.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { getQueryDocs } from "../core/query.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { carePlansCol, carePlanTasksCol, carePlanCompletionsCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession } from "../auth/session.js";
 import { getSeniorForUser } from "./senior-service.js";
@@ -64,6 +63,27 @@ function toIso(value) {
   return null;
 }
 
+function toIsoDate(value) {
+  const iso = toIso(value);
+  return iso ? iso.slice(0, 10) : null;
+}
+
+// Mobile writes `recurrence`; map its value space onto the canonical `frequency`.
+const RECURRENCE_TO_FREQUENCY = {
+  none: CARE_TASK_FREQUENCY.ONCE,
+  once: CARE_TASK_FREQUENCY.ONCE,
+  daily: CARE_TASK_FREQUENCY.DAILY,
+  weekdays: CARE_TASK_FREQUENCY.DAILY,
+  weekly: CARE_TASK_FREQUENCY.WEEKLY,
+  monthly: CARE_TASK_FREQUENCY.MONTHLY,
+  as_needed: CARE_TASK_FREQUENCY.AS_NEEDED,
+};
+
+function frequencyFrom(data) {
+  if (data.frequency) return data.frequency;
+  return RECURRENCE_TO_FREQUENCY[data.recurrence] ?? data.recurrence;
+}
+
 function emailsEqual(a, b) {
   return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 }
@@ -77,8 +97,15 @@ function planFrom(data) {
 }
 
 function taskFrom(data) {
-  return createCarePlanTask({
+  const base = createCarePlanTask({
     ...data,
+    title: data.title ?? data.name ?? "",
+    notes: data.notes ?? data.description ?? "",
+    frequency: frequencyFrom(data),
+    dueDate: toIsoDate(data.dueDate) ?? toIsoDate(data.scheduledAt),
+    status: data.status ?? data.mobileStatus,
+    assignedCaregiverUserId: data.assignedCaregiverUserId ?? data.assignedUserId ?? "",
+    assignedCaregiverName: data.assignedCaregiverName ?? data.assignedDisplayName ?? "",
     lastCompletedAt: toIso(data.lastCompletedAt),
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
@@ -87,6 +114,17 @@ function taskFrom(data) {
       ? data.notesLog.map((item) => createCareTaskNote({ ...item, createdAt: toIso(item.createdAt) }))
       : [],
   });
+  return {
+    ...base,
+    ...(data.name !== undefined ? { name: data.name } : {}),
+    ...(data.description !== undefined ? { description: data.description } : {}),
+    ...(data.scheduledAt !== undefined ? { scheduledAt: toIso(data.scheduledAt) } : {}),
+    ...(data.recurrence !== undefined ? { recurrence: data.recurrence } : {}),
+    ...(data.seriesId !== undefined ? { seriesId: data.seriesId } : {}),
+    ...(data.assignedUserId !== undefined ? { assignedUserId: data.assignedUserId } : {}),
+    ...(data.assignedDisplayName !== undefined ? { assignedDisplayName: data.assignedDisplayName } : {}),
+    ...(data.mobileStatus !== undefined ? { mobileStatus: data.mobileStatus } : {}),
+  };
 }
 
 function completionFrom(data) {
@@ -156,7 +194,7 @@ function localCompletions({ seniorId, taskId, planId } = {}) {
 }
 
 function matchesTaskFilter(item, { seniorId, planId, assignee } = {}) {
-  if (seniorId && item.seniorId !== seniorId) return false;
+  if (seniorId && item.seniorId && item.seniorId !== seniorId) return false;
   if (planId && item.planId !== planId) return false;
   if (assignee && !matchesAssignee(item, assignee)) return false;
   return true;
@@ -170,31 +208,25 @@ function matchesAssignee(task, assignee) {
   return false;
 }
 
-async function collectionDocs(collection, constraints = [], options = {}) {
-  return getQueryDocs(collection, constraints, { limit: QUERY_LIMITS.WORKSPACE, ...options });
+async function collectionDocs(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.WORKSPACE;
+  const query = sdk.query(collectionRef, ...constraints, sdk.limit(limit));
+  const snap = await sdk.getDocs(query);
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 async function readPlans(seniorId) {
   if (!usesLiveAuth()) return localPlans(seniorId);
   if (!seniorId) return [];
-  const sdk = getFirestoreSdk();
-  const docs = await collectionDocs(AUTH.CARE_PLANS_COLLECTION, [
-    sdk.where("seniorId", "==", seniorId),
-  ]);
+  const docs = await collectionDocs(carePlansCol(seniorId));
   return docs.map((item) => planFrom(item));
 }
 
 async function readTasks(filter = {}) {
   if (!usesLiveAuth()) return localTasks(filter);
-  const sdk = getFirestoreSdk();
-  const constraints = [];
-  if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
-  else if (filter.planId) constraints.push(sdk.where("planId", "==", filter.planId));
-  else if (filter.assignee?.userId) constraints.push(sdk.where("assignedCaregiverUserId", "==", filter.assignee.userId));
-  else if (filter.assignee?.email) {
-    constraints.push(sdk.where("assignedCaregiverEmail", "==", String(filter.assignee.email).trim().toLowerCase()));
-  }
-  const docs = await collectionDocs(AUTH.CARE_PLAN_TASKS_COLLECTION, constraints);
+  if (!filter.seniorId) return [];
+  const docs = await collectionDocs(carePlanTasksCol(filter.seniorId));
   return docs
     .map((item) => taskFrom(item))
     .filter((item) => matchesTaskFilter(item, filter));
@@ -202,38 +234,31 @@ async function readTasks(filter = {}) {
 
 async function readCompletions(filter = {}) {
   if (!usesLiveAuth()) return localCompletions(filter);
-  const sdk = getFirestoreSdk();
-  const constraints = [];
-  if (filter.taskId) constraints.push(sdk.where("taskId", "==", filter.taskId));
-  else if (filter.planId) constraints.push(sdk.where("planId", "==", filter.planId));
-  else if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
-  const docs = await collectionDocs(AUTH.CARE_PLAN_COMPLETIONS_COLLECTION, constraints);
+  if (!filter.seniorId) return [];
+  const docs = await collectionDocs(carePlanCompletionsCol(filter.seniorId));
   return docs
     .map((item) => completionFrom(item))
     .filter((item) => {
-      if (filter.seniorId && item.seniorId !== filter.seniorId) return false;
       if (filter.taskId && item.taskId !== filter.taskId) return false;
       if (filter.planId && item.planId !== filter.planId) return false;
       return true;
     });
 }
 
-async function readPlanById(id) {
-  if (!id) return null;
+async function readPlanById(id, seniorId) {
+  if (!id || !seniorId) return null;
   if (!usesLiveAuth()) return localPlans().find((item) => item.id === id) ?? null;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.CARE_PLANS_COLLECTION, id));
+  const snap = await sdk.getDoc(sdk.doc(carePlansCol(seniorId), id));
   if (!snap.exists()) return null;
   return planFrom({ id: snap.id, ...snap.data() });
 }
 
-async function readTaskById(id) {
-  if (!id) return null;
+async function readTaskById(id, seniorId) {
+  if (!id || !seniorId) return null;
   if (!usesLiveAuth()) return localTasks().find((item) => item.id === id) ?? null;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.CARE_PLAN_TASKS_COLLECTION, id));
+  const snap = await sdk.getDoc(sdk.doc(carePlanTasksCol(seniorId), id));
   if (!snap.exists()) return null;
   return taskFrom({ id: snap.id, ...snap.data() });
 }
@@ -242,11 +267,11 @@ async function savePlan(plan) {
   const record = planFrom({ ...plan, updatedAt: nowIso() });
   if (!usesLiveAuth()) return planFrom(writeLocalRecord(PLANS_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = carePlansCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.CARE_PLANS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.CARE_PLANS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = { ...payload, updatedAt: sdk.serverTimestamp() };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
@@ -258,11 +283,11 @@ async function saveTask(task) {
   const record = taskFrom({ ...task, updatedAt: nowIso() });
   if (!usesLiveAuth()) return taskFrom(writeLocalRecord(TASKS_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = carePlanTasksCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.CARE_PLAN_TASKS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.CARE_PLAN_TASKS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({
     ...record,
     id: ref.id,
@@ -278,11 +303,11 @@ async function saveCompletion(completion) {
   const record = completionFrom(completion);
   if (!usesLiveAuth()) return completionFrom(writeLocalRecord(COMPLETIONS_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = carePlanCompletionsCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.CARE_PLAN_COMPLETIONS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.CARE_PLAN_COMPLETIONS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = {
     ...payload,
@@ -606,7 +631,7 @@ export async function createCarePlanForSenior(input = {}, session = getSession()
 export async function updateCarePlanRecord(planId, input = {}, session = getSession()) {
   const ctx = await loadContext(session);
   assertCanManage(ctx);
-  const existing = await readPlanById(planId);
+  const existing = await readPlanById(planId, ctx.senior.id);
   if (!existing || existing.seniorId !== ctx.senior.id) {
     throw new Error("That care plan could not be found.");
   }
@@ -631,7 +656,7 @@ export async function assignCarePlanTask(input = {}, session = getSession()) {
   const ctx = await loadContext(session);
   assertCanManage(ctx);
   const plan = await resolvePlanForTask(ctx, input.planId || input.id);
-  const existing = input.taskId ? await readTaskById(input.taskId) : null;
+  const existing = input.taskId ? await readTaskById(input.taskId, ctx.senior.id) : null;
   if (existing && existing.seniorId !== ctx.senior.id) {
     throw new Error("That task could not be found.");
   }
@@ -691,7 +716,7 @@ export async function assignCarePlanTask(input = {}, session = getSession()) {
 
 async function resolvePlanForTask(ctx, planId) {
   if (planId) {
-    const plan = await readPlanById(planId);
+    const plan = await readPlanById(planId, ctx.senior.id);
     if (!plan || plan.seniorId !== ctx.senior.id) {
       throw new Error("Choose a care plan before assigning a task.");
     }
@@ -710,7 +735,7 @@ async function resolvePlanForTask(ctx, planId) {
 
 export async function completeCarePlanTask(taskId, input = {}, session = getSession()) {
   const ctx = await loadContext(session);
-  const task = await readTaskById(taskId);
+  const task = await readTaskById(taskId, ctx.senior.id);
   if (!task || task.seniorId !== ctx.senior.id) {
     throw new Error("That care task could not be found.");
   }
@@ -787,7 +812,7 @@ export async function skipCarePlanTask(taskId, input = {}, session = getSession(
 
 export async function addCareTaskNote(taskId, body, session = getSession()) {
   const ctx = await loadContext(session);
-  const task = await readTaskById(taskId);
+  const task = await readTaskById(taskId, ctx.senior.id);
   if (!task || task.seniorId !== ctx.senior.id) {
     throw new Error("That care task could not be found.");
   }
@@ -827,7 +852,7 @@ export async function addCareTaskNote(taskId, body, session = getSession()) {
 export async function reopenCarePlanTask(taskId, session = getSession()) {
   const ctx = await loadContext(session);
   assertCanManage(ctx);
-  const task = await readTaskById(taskId);
+  const task = await readTaskById(taskId, ctx.senior.id);
   if (!task || task.seniorId !== ctx.senior.id) {
     throw new Error("That care task could not be found.");
   }

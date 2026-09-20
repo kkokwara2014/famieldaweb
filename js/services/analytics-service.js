@@ -11,7 +11,8 @@ import {
 import { createAnalyticsEvent } from "../models/analytics-event.js";
 import { storage } from "../core/storage.js";
 import { logger } from "../core/logger.js";
-import { getFirebaseDb, getFirestoreSdk, initFirebase, usesLiveAuth } from "../core/firebase.js";
+import { getFirestoreSdk, initFirebase, usesLiveAuth } from "../core/firebase.js";
+import { analyticsEventsCol } from "../core/firestore-paths.js";
 import { getSession } from "../auth/session.js";
 
 const EVENTS_KEY = "product-analytics-events";
@@ -65,13 +66,13 @@ function actorFrom(actor) {
 
 async function persistLive(record) {
   await initFirebase();
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  if (!db || !sdk) return record;
+  if (!sdk) return record;
 
+  const collection = analyticsEventsCol();
   const ref = record.id
-    ? sdk.doc(db, AUTH.ANALYTICS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.ANALYTICS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const existing = record.id ? await sdk.getDoc(ref) : null;
   if (existing?.exists()) return eventFrom({ id: ref.id, ...existing.data() });
 

@@ -1,5 +1,4 @@
 import {
-  AUTH,
   NOTIFICATION_TYPES,
   ROLES,
   VERIFICATION_DOC_KINDS,
@@ -36,6 +35,11 @@ import {
   usesLiveAuth,
 } from "../core/firebase.js";
 import { callCloudFunction } from "../core/functions.js";
+import {
+  professionalVerificationDoc,
+  professionalVerificationDocumentsCol,
+  userDoc,
+} from "../core/firestore-paths.js";
 import { getSession, setSession } from "../auth/session.js";
 import { getMockUser, listMockUsers, updateMockUser } from "../auth/auth-service.js";
 import { notifyQuietly } from "./notification-service.js";
@@ -742,6 +746,32 @@ export async function reviewVerification({ userId, action, notes } = {}, session
   return mapView(recordFrom(result.verification));
 }
 
+async function readLiveVerification(userId) {
+  if (!userId) return null;
+  const db = getFirebaseDb();
+  const sdk = getFirestoreSdk();
+  if (!db || !sdk) return null;
+
+  const snap = await sdk.getDoc(professionalVerificationDoc(userId));
+  if (snap.exists()) {
+    const data = snap.data() || {};
+    return { ...data, userId: data.userId || userId };
+  }
+
+  const userSnap = await sdk.getDoc(userDoc(userId));
+  const embedded = userSnap.exists() ? userSnap.data()?.professionalVerification : null;
+  if (!embedded || typeof embedded !== "object") return null;
+
+  let documents = Array.isArray(embedded.documents) ? embedded.documents : [];
+  if (!documents.length) {
+    const docsSnap = await sdk.getDocs(
+      sdk.query(professionalVerificationDocumentsCol(), sdk.where("userId", "==", userId)),
+    );
+    documents = docsSnap.docs.map((item) => item.data());
+  }
+  return { ...embedded, userId, documents };
+}
+
 export async function verificationMapFor(people = []) {
   const ids = [...new Set(people.map((item) => item?.userId || item?.id).filter(Boolean))];
   const emails = [...new Set(people.map((item) => String(item?.email || "").trim().toLowerCase()).filter(Boolean))];
@@ -755,15 +785,11 @@ export async function verificationMapFor(people = []) {
     return map;
   }
   try {
-    const db = getFirebaseDb();
-    const sdk = getFirestoreSdk();
     await Promise.all(ids.map(async (id) => {
-      const snap = await sdk.getDoc(sdk.doc(db, AUTH.VERIFICATIONS_COLLECTION, id));
-      if (snap.exists()) {
-        const data = snap.data();
-        map.set(id, data.status || VERIFICATION_STATUS.PENDING);
-        if (data.email) map.set(`email:${String(data.email).toLowerCase()}`, data.status);
-      }
+      const data = await readLiveVerification(id);
+      if (!data) return;
+      map.set(id, data.status || VERIFICATION_STATUS.PENDING);
+      if (data.email) map.set(`email:${String(data.email).toLowerCase()}`, data.status);
     }));
   } catch {
     return map;

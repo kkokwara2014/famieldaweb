@@ -1,5 +1,4 @@
 import {
-  AUTH,
   CARE_CIRCLE_ROLES,
   CIRCLE_KINDS,
   CIRCLE_PERMISSIONS,
@@ -30,8 +29,13 @@ import {
 import { createCareCircleInvite, createCareCircleMember } from "../models/care-circle.js";
 import { mockCircle, mockInvites } from "./mock-data.js";
 import { storage } from "../core/storage.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { getQueryDocs } from "../core/query.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import {
+  careCircleInvitesCol,
+  circleMemberDoc,
+  circleMembersCol,
+  seniorsCol,
+} from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession, setSession } from "../auth/session.js";
 import { updateMockUser } from "../auth/auth-service.js";
@@ -111,24 +115,86 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+const PERMISSION_OWNER = "owner";
+const PERMISSION_FAMILY = "familyMember";
+const PERMISSION_CAREGIVER = "caregiver";
+const PERMISSION_PRACTITIONER = "healthPractitioner";
+const PERMISSION_EMERGENCY = "emergencyContact";
+
+const PERMISSION_BY_KIND = {
+  [CIRCLE_KINDS.CAREGIVER]: PERMISSION_CAREGIVER,
+  [CIRCLE_KINDS.PRACTITIONER]: PERMISSION_PRACTITIONER,
+  [CIRCLE_KINDS.FAMILY]: PERMISSION_FAMILY,
+};
+
+function permissionForKind(kind) {
+  return PERMISSION_BY_KIND[kind] || PERMISSION_FAMILY;
+}
+
+function familyIdForSenior(senior, session) {
+  return senior?.familyId || senior?.ownerId || session?.familyId || session?.id || "";
+}
+
+function singularPermissionFor(record = {}) {
+  if (record.permission) return record.permission;
+  if (record.role === CARE_CIRCLE_ROLES.OWNER) return PERMISSION_OWNER;
+  if (record.kind === CIRCLE_KINDS.CAREGIVER) return PERMISSION_CAREGIVER;
+  if (record.kind === CIRCLE_KINDS.PRACTITIONER) return PERMISSION_PRACTITIONER;
+  if (record.isEmergencyContact) return PERMISSION_EMERGENCY;
+  return PERMISSION_FAMILY;
+}
+
+function roleForPermission(permission) {
+  if (!permission) return undefined;
+  if (permission === PERMISSION_OWNER) return CARE_CIRCLE_ROLES.OWNER;
+  return CARE_CIRCLE_ROLES.MEMBER;
+}
+
+function kindForPermission(permission) {
+  if (!permission) return undefined;
+  if (permission === PERMISSION_CAREGIVER) return CIRCLE_KINDS.CAREGIVER;
+  if (permission === PERMISSION_PRACTITIONER) return CIRCLE_KINDS.PRACTITIONER;
+  return CIRCLE_KINDS.FAMILY;
+}
+
 function memberFrom(data) {
-  return createCareCircleMember({
+  const role = data.role ?? roleForPermission(data.permission);
+  const kind = data.kind ?? kindForPermission(data.permission);
+  const member = createCareCircleMember({
     ...data,
+    role,
+    kind,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     invitedAt: toIso(data.invitedAt),
     respondedAt: toIso(data.respondedAt),
     lastSeenAt: toIso(data.lastSeenAt),
   });
+  return {
+    ...member,
+    permission: data.permission || singularPermissionFor(member),
+    isEmergencyContact: Boolean(data.isEmergencyContact),
+  };
 }
 
 function inviteFrom(data) {
-  return createCareCircleInvite({
+  const status = data.status === "cancelled" ? INVITE_STATUS.REVOKED : data.status;
+  const role = data.role ?? roleForPermission(data.permission);
+  const kind = data.kind ?? kindForPermission(data.permission);
+  const invite = createCareCircleInvite({
     ...data,
+    status,
+    role,
+    kind,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     respondedAt: toIso(data.respondedAt),
   });
+  return {
+    ...invite,
+    permission: data.permission || singularPermissionFor(invite),
+    isEmergencyContact: Boolean(data.isEmergencyContact),
+  };
 }
 
 function toDoc(record) {
@@ -184,18 +250,20 @@ function localInvites({ seniorId, email, phone, token } = {}) {
     });
 }
 
-async function collectionDocs(collection, constraints = [], options = {}) {
-  return getQueryDocs(collection, constraints, { limit: QUERY_LIMITS.WORKSPACE, ...options });
+async function collectionDocs(ref, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  if (!ref || !sdk) return [];
+  const limit = options.limit ?? QUERY_LIMITS.WORKSPACE;
+  const snap = await sdk.getDocs(sdk.query(ref, ...constraints, sdk.limit(limit)));
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 async function readMembers(seniorId) {
   if (!usesLiveAuth()) return localMembers(seniorId);
+  if (!seniorId) return [];
 
-  const sdk = getFirestoreSdk();
-  const docs = await collectionDocs(AUTH.CIRCLE_COLLECTION, [
-    sdk.where("seniorId", "==", seniorId),
-  ]);
-  return docs.map((item) => memberFrom(item));
+  const docs = await collectionDocs(circleMembersCol(seniorId));
+  return docs.map((item) => memberFrom({ ...item, seniorId: item.seniorId || seniorId }));
 }
 
 async function readInvites(filter = {}) {
@@ -207,7 +275,7 @@ async function readInvites(filter = {}) {
   else if (filter.email) constraints.push(sdk.where("email", "==", String(filter.email).trim().toLowerCase()));
   else if (filter.phone) constraints.push(sdk.where("phone", "==", toE164(filter.phone) || String(filter.phone).trim()));
   else if (filter.token) constraints.push(sdk.where("token", "==", filter.token));
-  const docs = await collectionDocs(AUTH.CIRCLE_INVITES_COLLECTION, constraints);
+  const docs = await collectionDocs(careCircleInvitesCol(), constraints);
   return docs
     .map((item) => inviteFrom(item))
     .filter((item) => {
@@ -222,14 +290,18 @@ async function saveMember(member) {
   const record = memberFrom({ ...member, updatedAt: nowIso() });
   if (!usesLiveAuth()) return memberFrom(writeLocalRecord(MEMBERS_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const ref = record.id
-    ? sdk.doc(db, AUTH.CIRCLE_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.CIRCLE_COLLECTION));
+  const seniorId = record.seniorId;
+  if (!seniorId) throw new Error("A circle member needs a senior id.");
+  const memberId = record.userId || record.id;
+  const ref = memberId
+    ? circleMemberDoc(seniorId, memberId)
+    : sdk.doc(circleMembersCol(seniorId));
   const payload = toDoc({ ...record, id: ref.id });
   const data = {
     ...payload,
+    seniorId,
+    permission: singularPermissionFor(record),
     updatedAt: sdk.serverTimestamp(),
   };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
@@ -241,11 +313,10 @@ async function saveInvite(invite) {
   const record = inviteFrom({ ...invite, updatedAt: nowIso() });
   if (!usesLiveAuth()) return inviteFrom(writeLocalRecord(INVITES_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
   const ref = record.id
-    ? sdk.doc(db, AUTH.CIRCLE_INVITES_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.CIRCLE_INVITES_COLLECTION));
+    ? sdk.doc(careCircleInvitesCol(), record.id)
+    : sdk.doc(careCircleInvitesCol());
   const payload = toDoc({
     ...record,
     id: ref.id,
@@ -254,6 +325,7 @@ async function saveInvite(invite) {
   });
   const data = {
     ...payload,
+    permission: singularPermissionFor(record),
     updatedAt: sdk.serverTimestamp(),
   };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
@@ -261,11 +333,15 @@ async function saveInvite(invite) {
   return inviteFrom({ ...record, id: ref.id });
 }
 
-async function liveCircle(name, data) {
-  return callCloudFunction(name, data, {
-    fallback: name === "inviteCareCircleMember"
-      ? "The invitation could not be sent. Try again."
-      : "That request could not be completed.",
+async function liveCircle(name, data, fallback = "That request could not be completed.") {
+  return callCloudFunction(name, data, { fallback });
+}
+
+async function updateInviteStatus(inviteId, status) {
+  const sdk = getFirestoreSdk();
+  await sdk.updateDoc(sdk.doc(careCircleInvitesCol(), inviteId), {
+    status,
+    respondedAt: sdk.serverTimestamp(),
   });
 }
 
@@ -405,6 +481,9 @@ function normalizeInviteInput(input = {}) {
     relationship,
     professionalType,
     permissions,
+    professionalUserId: input.professionalUserId || null,
+    isPrimaryCaregiver: Boolean(input.isPrimaryCaregiver),
+    isEmergencyContact: Boolean(input.isEmergencyContact),
     message: String(input.message || "").trim(),
   };
 }
@@ -592,35 +671,47 @@ export async function inviteCareCircleMember(input, session = getSession()) {
   }
 
   if (usesLiveAuth()) {
-    const result = await liveCircle("inviteCareCircleMember", {
+    if (!payload.email && !payload.professionalUserId && !payload.phone) {
+      throw new Error("Invitations need an email address or phone number.");
+    }
+    const result = await callCloudFunction("sendCareCircleInvite", {
+      familyId: familyIdForSenior(senior, session),
       seniorId: senior.id,
-      ...payload,
-    });
+      seniorName: senior.displayName,
+      email: payload.email || undefined,
+      phone: payload.phone || undefined,
+      professionalUserId: payload.professionalUserId || undefined,
+      permission: permissionForKind(payload.kind),
+      relationship: payload.relationship,
+      isPrimaryCaregiver: payload.isPrimaryCaregiver,
+      isEmergencyContact: payload.isEmergencyContact,
+      invitedByName: session.displayName,
+    }, { fallback: "The invitation could not be sent. Try again." });
+    const invitationId = result?.invitationId;
     trackInviteSent(payload.kind, {
-      dedupeKey: `${inviteEventName(payload.kind)}:${result.inviteId}`,
+      dedupeKey: `${inviteEventName(payload.kind)}:${invitationId}`,
       inviteKind: payload.kind,
-      inviteId: result.inviteId,
+      inviteId: invitationId,
       seniorId: senior.id,
     }, session);
-    const token = result.token || result.inviteId;
     return {
       member: {
-        id: result.memberId,
+        id: invitationId,
         name: payload.name,
-        email: result.email || payload.email,
-        phone: result.phone || payload.phone,
+        email: payload.email,
+        phone: payload.phone,
         kind: payload.kind,
       },
       invite: {
-        id: result.inviteId,
-        token,
-        channel: result.channel || payload.channel,
-        accountState: result.accountState || "new",
-        email: result.email || payload.email,
-        phone: result.phone || payload.phone,
+        id: invitationId,
+        token: invitationId,
+        channel: payload.channel,
+        accountState: "new",
+        email: payload.email,
+        phone: payload.phone,
       },
-      shareUrl: careCircleInviteUrl(token),
-      accountState: result.accountState || "new",
+      shareUrl: careCircleInviteUrl(invitationId),
+      accountState: "new",
     };
   }
 
@@ -636,6 +727,7 @@ export async function inviteCareCircleMember(input, session = getSession()) {
   const member = await saveMember(createCareCircleMember({
     id: usesLiveAuth() ? "" : newId("m"),
     seniorId: senior.id,
+    userId: existingUser?.id || null,
     name: payload.name,
     email: storedEmail,
     phone: storedPhone,
@@ -707,7 +799,30 @@ export async function inviteCareCircleMember(input, session = getSession()) {
 
 export async function resendInvitation(inviteId, session = getSession()) {
   if (usesLiveAuth()) {
-    await liveCircle("resendCareCircleInvite", { inviteId });
+    const sdk = getFirestoreSdk();
+    const snap = await sdk.getDoc(sdk.doc(careCircleInvitesCol(), inviteId));
+    if (!snap.exists()) throw new Error("That invitation could not be found.");
+    const raw = snap.data() || {};
+    if (!raw.email && !raw.professionalUserId && !raw.phone) {
+      throw new Error("This invitation has no contact to resend to.");
+    }
+    if (raw.status === INVITE_STATUS.PENDING) {
+      await updateInviteStatus(inviteId, INVITE_STATUS.REVOKED);
+    }
+    const senior = raw.familyId ? null : await getSeniorForUser(session);
+    await callCloudFunction("sendCareCircleInvite", {
+      familyId: raw.familyId || familyIdForSenior(senior, session),
+      seniorId: raw.seniorId,
+      seniorName: raw.seniorName || senior?.displayName || "",
+      email: raw.email || undefined,
+      phone: raw.phone || undefined,
+      professionalUserId: raw.professionalUserId || undefined,
+      permission: raw.permission || PERMISSION_FAMILY,
+      relationship: raw.relationship || "",
+      isPrimaryCaregiver: raw.isPrimaryCaregiver === true,
+      isEmergencyContact: raw.isEmergencyContact === true,
+      invitedByName: session.displayName,
+    }, { fallback: "The invitation could not be re-sent. Try again." });
     return true;
   }
   const state = await loadManagedInvite(inviteId, session);
@@ -726,8 +841,7 @@ export async function resendInvitation(inviteId, session = getSession()) {
 
 export async function revokeInvitation(inviteId, session = getSession()) {
   if (usesLiveAuth()) {
-    const senior = await getSeniorForUser(session);
-    await liveCircle("revokeCareCircleInvite", { inviteId, seniorId: senior?.id });
+    await updateInviteStatus(inviteId, INVITE_STATUS.REVOKED);
     return true;
   }
   const state = await loadManagedInvite(inviteId, session);
@@ -845,7 +959,7 @@ export async function acceptInvitation(inviteId, session = getSession()) {
 
 export async function declineInvitation(inviteId, session = getSession()) {
   if (usesLiveAuth()) {
-    await liveCircle("declineCareCircleInvite", { inviteId });
+    await updateInviteStatus(inviteId, INVITE_STATUS.DECLINED);
     clearStoredInviteToken();
     return true;
   }
@@ -875,7 +989,12 @@ export async function removeCircleMember(memberId, session = getSession()) {
   if (!senior) throw new Error("No senior profile is linked to this account.");
 
   if (usesLiveAuth()) {
-    await liveCircle("removeCareCircleMember", { seniorId: senior.id, memberId });
+    const sdk = getFirestoreSdk();
+    await sdk.updateDoc(circleMemberDoc(senior.id, memberId), {
+      status: CIRCLE_STATUS.REMOVED,
+      endedAt: sdk.serverTimestamp(),
+      updatedAt: sdk.serverTimestamp(),
+    });
     return true;
   }
 
@@ -907,12 +1026,31 @@ export async function updateCircleMember(memberId, patch, session = getSession()
   if (!senior) throw new Error("No senior profile is linked to this account.");
 
   if (usesLiveAuth()) {
-    await liveCircle("updateCareCircleMember", {
-      seniorId: senior.id,
-      memberId,
-      role: patch.role,
-      relationship: patch.relationship,
-      permissions: patch.permissions,
+    const sdk = getFirestoreSdk();
+    const ref = circleMemberDoc(senior.id, memberId);
+    const snap = await sdk.getDoc(ref);
+    if (!snap.exists()) throw new Error("That person is not in this circle.");
+    const current = snap.data() || {};
+    if (current.role === CARE_CIRCLE_ROLES.OWNER || current.permission === PERMISSION_OWNER) {
+      throw new Error("The owner’s access cannot be changed.");
+    }
+    const nextRole = patch.role && patch.role !== CARE_CIRCLE_ROLES.OWNER
+      ? patch.role
+      : (current.role || CARE_CIRCLE_ROLES.MEMBER);
+    const currentPermission = current.permission || singularPermissionFor(current);
+    const nextPermission = currentPermission === PERMISSION_OWNER
+      ? PERMISSION_FAMILY
+      : currentPermission;
+    await sdk.updateDoc(ref, {
+      role: nextRole,
+      relationship: patch.relationship !== undefined
+        ? String(patch.relationship || "").trim()
+        : (current.relationship || ""),
+      permissions: Array.isArray(patch.permissions) && patch.permissions.length
+        ? patch.permissions
+        : current.permissions,
+      permission: nextPermission,
+      updatedAt: sdk.serverTimestamp(),
     });
     return true;
   }
@@ -952,22 +1090,28 @@ export async function listMembershipsForSession(session = getSession()) {
   }
 
   const sdk = getFirestoreSdk();
-  const docs = [];
+  const seniorIds = new Set();
+  if (session.seniorId) seniorIds.add(session.seniorId);
   if (session.id) {
-    docs.push(...await collectionDocs(AUTH.CIRCLE_COLLECTION, [
-      sdk.where("userId", "==", session.id),
-    ]));
+    const [owned, memberOf] = await Promise.all([
+      collectionDocs(seniorsCol(), [sdk.where("ownerId", "==", session.id)]),
+      collectionDocs(seniorsCol(), [sdk.where("memberIds", "array-contains", session.id)]),
+    ]);
+    owned.forEach((doc) => seniorIds.add(doc.id));
+    memberOf.forEach((doc) => seniorIds.add(doc.id));
   }
-  if (session.email) {
-    docs.push(...await collectionDocs(AUTH.CIRCLE_COLLECTION, [
-      sdk.where("email", "==", String(session.email).trim().toLowerCase()),
-    ]));
-  }
+
+  const docs = (await Promise.all(
+    [...seniorIds].map((seniorId) => collectionDocs(circleMembersCol(seniorId))),
+  )).flat();
   const seen = new Set();
   return docs
     .map((item) => memberFrom(item))
     .filter((member) => {
-      if (member.status !== CIRCLE_STATUS.ACTIVE || seen.has(member.id)) return false;
+      const matches = member.userId === session.id
+        || emailsEqual(member.email, session.email)
+        || phonesEqual(member.phone, session.phone);
+      if (member.status !== CIRCLE_STATUS.ACTIVE || !matches || seen.has(member.id)) return false;
       seen.add(member.id);
       return true;
     });
@@ -988,10 +1132,10 @@ export async function updateOwnPresence(seniorId, patch = {}, session = getSessi
   if (!usesLiveAuth()) {
     return saveMember({ ...me, ...next });
   }
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  await sdk.updateDoc(sdk.doc(db, AUTH.CIRCLE_COLLECTION, me.id), {
+  await sdk.updateDoc(circleMemberDoc(seniorId, me.userId || me.id), {
     ...next,
+    permission: singularPermissionFor(me),
     updatedAt: sdk.serverTimestamp(),
   });
   return memberFrom({ ...me, ...next });

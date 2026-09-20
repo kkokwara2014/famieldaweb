@@ -23,6 +23,13 @@ const STATUS = {
   REVOKED: "revoked",
 };
 
+const STATUS_ALIASES = {
+  accepted: "joined",
+  completed: "successful",
+  canceled: "revoked",
+  cancelled: "revoked",
+};
+
 const CHANNEL = {
   EMAIL: "email",
   LINK: "link",
@@ -70,6 +77,20 @@ function normalizeCode(value) {
   return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9-]/g, "");
 }
 
+function normalizeStatus(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (Object.values(STATUS).includes(raw)) return raw;
+  return STATUS_ALIASES[raw] || STATUS.PENDING;
+}
+
+function referrerIdOf(data = {}) {
+  return data.referrerId || data.referrerUserId || "";
+}
+
+function inviteeUserIdOf(data = {}) {
+  return data.inviteeUserId || data.referredUserId || null;
+}
+
 function randomSuffix(length = 4) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -94,7 +115,7 @@ function serializeReferral(doc) {
   return {
     id,
     code: data.code || "",
-    referrerId: data.referrerId || "",
+    referrerId: referrerIdOf(data),
     referrerName: data.referrerName || "",
     referrerEmail: data.referrerEmail || "",
     email: data.email || "",
@@ -102,8 +123,8 @@ function serializeReferral(doc) {
     relationship: data.relationship || "",
     message: data.message || "",
     channel: data.channel || CHANNEL.EMAIL,
-    status: data.status || STATUS.PENDING,
-    inviteeUserId: data.inviteeUserId || null,
+    status: normalizeStatus(data.status),
+    inviteeUserId: inviteeUserIdOf(data),
     inviteeName: data.inviteeName || "",
     inviteeRole: data.inviteeRole || null,
     joinedAt: toIso(data.joinedAt),
@@ -152,8 +173,13 @@ function trialBanner() {
 }
 
 async function listReferralsFor(referrerId) {
-  const snap = await db().collection(REFERRALS).where("referrerId", "==", referrerId).get();
-  return snap.docs.map(serializeReferral).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const [canonical, legacy] = await Promise.all([
+    db().collection(REFERRALS).where("referrerId", "==", referrerId).get(),
+    db().collection(REFERRALS).where("referrerUserId", "==", referrerId).get(),
+  ]);
+  const byId = new Map();
+  [...canonical.docs, ...legacy.docs].forEach((doc) => byId.set(doc.id, doc));
+  return [...byId.values()].map(serializeReferral).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
 }
 
 async function ensureProfile(user) {
@@ -391,7 +417,7 @@ exports.resendFamilyReferral = async (request) => {
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError("not-found", "That family invite was not found.");
   const referral = snap.data();
-  if (referral.referrerId !== uid) throw new HttpsError("permission-denied", "You cannot resend this invite.");
+  if (referrerIdOf(referral) !== uid) throw new HttpsError("permission-denied", "You cannot resend this invite.");
   if (referral.status !== STATUS.PENDING) throw new HttpsError("failed-precondition", "Only waiting invites can be sent again.");
   const last = referral.lastSentAt ? new Date(toIso(referral.lastSentAt)).getTime() : 0;
   if (last && Date.now() - last < RESEND_COOLDOWN_MS) {
@@ -422,7 +448,7 @@ exports.revokeFamilyReferral = async (request) => {
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError("not-found", "That family invite was not found.");
   const referral = snap.data();
-  if (referral.referrerId !== uid) throw new HttpsError("permission-denied", "You cannot revoke this invite.");
+  if (referrerIdOf(referral) !== uid) throw new HttpsError("permission-denied", "You cannot revoke this invite.");
   if (referral.status !== STATUS.PENDING) {
     throw new HttpsError("failed-precondition", "Only waiting invites can be revoked.");
   }
@@ -533,17 +559,21 @@ exports.claimFamilyReferral = async (request) => {
 exports.completeFamilyReferral = async (request) => {
   const { uid, user } = await security.requireActiveUser(request);
   if (!user.referredBy) return { ok: true, completed: false };
-  const snap = await db().collection(REFERRALS)
-    .where("inviteeUserId", "==", uid)
-    .where("status", "==", STATUS.JOINED)
-    .limit(4)
-    .get();
-  if (snap.empty) return { ok: true, completed: false };
+  const [canonical, legacy] = await Promise.all([
+    db().collection(REFERRALS).where("inviteeUserId", "==", uid).limit(8).get(),
+    db().collection(REFERRALS).where("referredUserId", "==", uid).limit(8).get(),
+  ]);
+  const byId = new Map();
+  [...canonical.docs, ...legacy.docs].forEach((doc) => byId.set(doc.id, doc));
+  const joined = [...byId.values()]
+    .filter((doc) => normalizeStatus(doc.data()?.status) === STATUS.JOINED)
+    .slice(0, 4);
+  if (!joined.length) return { ok: true, completed: false };
 
   const role = security.textOf(request.data?.role) || user.role;
   const now = new Date();
   let completed = false;
-  for (const doc of snap.docs) {
+  for (const doc of joined) {
     const patch = { inviteeRole: role || null, updatedAt: now };
     if (role === "family") {
       patch.status = STATUS.SUCCESSFUL;
@@ -553,8 +583,9 @@ exports.completeFamilyReferral = async (request) => {
     }
     await doc.ref.set(patch, { merge: true });
     if (role === "family") {
-      await bumpCounts(doc.data().referrerId, { successful: 1 });
-      const referrer = await security.loadUser(doc.data().referrerId);
+      const referrerId = referrerIdOf(doc.data());
+      await bumpCounts(referrerId, { successful: 1 });
+      const referrer = await security.loadUser(referrerId);
       const grant = await maybeGrantPlusTrial(referrer, { id: doc.id, ...doc.data() });
       await notifications.notifyPeople([{ userId: referrer.id, email: referrer.email }], {
         type: notifications.TYPES.FAMILY_REFERRAL_SUCCESS,

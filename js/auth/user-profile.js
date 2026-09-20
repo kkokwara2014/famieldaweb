@@ -5,7 +5,7 @@
  *
  * Fields: uid, email, displayName, firstName, lastName, phone, phoneCountry,
  * role, professionalType, plan, seniorId,
- * emailVerified, photoURL, notificationPrefs, createdAt, updatedAt, createdPlatform,
+ * emailVerified, photoUrl, notificationPreferences, createdAt, updatedAt, createdPlatform,
  * lastLoginAt, lastLoginPlatform, roleSelectedAt, onboardingCompletedAt,
  * onboardingPath, familyRelationship, careTypes, specialty, status, adminGrant,
  * referralCode, referredBy, referredByCode, referralGrant,
@@ -22,7 +22,8 @@ import { ACCOUNT_STATUS, AUTH, SUBSCRIPTION_PLANS } from "../config/constants.js
 import { defaultNotificationPrefs } from "../config/notifications.js";
 import { normalizeRoleAndType } from "../config/roles.js";
 import { createUser } from "../models/user.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { userDoc } from "../core/firestore-paths.js";
 import { logger } from "../core/logger.js";
 
 function toIso(value) {
@@ -107,9 +108,9 @@ export function profileFromAuthUser(firebaseUser, extra = {}) {
     emailVerified: Boolean(firebaseUser.emailVerified) || allowUnverified,
     verificationStatus: extra.verificationStatus ?? null,
     verifiedAt: toIso(extra.verifiedAt),
-    photoURL: firebaseUser.photoURL ?? extra.photoURL ?? extra.photoUrl ?? extra.photo_url ?? extra.avatarUrl ?? null,
+    photoURL: extra.photoUrl ?? extra.photoURL ?? firebaseUser.photoURL ?? extra.photo_url ?? extra.avatarUrl ?? null,
     timeZone: extra.timeZone ?? extra.timezone ?? extra.time_zone ?? "",
-    notificationPrefs: extra.notificationPrefs,
+    notificationPrefs: extra.notificationPreferences ?? extra.notificationPrefs,
     status: extra.status ?? ACCOUNT_STATUS.ACTIVE,
     suspendedAt: toIso(extra.suspendedAt),
     suspendedBy: extra.suspendedBy ?? null,
@@ -166,9 +167,8 @@ export async function loadOrCreateUserProfile(firebaseUser, extras = {}) {
     return profileFromAuthUser(firebaseUser, extras);
   }
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const ref = sdk.doc(db, AUTH.USERS_COLLECTION, firebaseUser.uid);
+  const ref = userDoc(firebaseUser.uid);
   const snap = await sdk.getDoc(ref);
   const now = sdk.serverTimestamp();
   const existing = snap.exists();
@@ -193,10 +193,10 @@ export async function loadOrCreateUserProfile(firebaseUser, extras = {}) {
     plan: SUBSCRIPTION_PLANS.FREE,
     seniorId: extras.seniorId ?? null,
     emailVerified: Boolean(firebaseUser.emailVerified),
-    photoURL: firebaseUser.photoURL ?? extras.photoURL ?? null,
+    photoUrl: extras.photoUrl ?? extras.photoURL ?? firebaseUser.photoURL ?? null,
     timeZone: extras.timeZone ?? null,
     status: ACCOUNT_STATUS.ACTIVE,
-    notificationPrefs: extras.notificationPrefs ?? defaultNotificationPrefs(),
+    notificationPreferences: extras.notificationPreferences ?? extras.notificationPrefs ?? defaultNotificationPrefs(),
     createdAt: now,
     updatedAt: now,
     createdPlatform: AUTH.PLATFORM,
@@ -231,9 +231,8 @@ export async function loadOrCreateUserProfile(firebaseUser, extras = {}) {
 
 export async function updateUserProfile(uid, patch) {
   if (!usesLiveAuth() || !uid) return;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  await sdk.updateDoc(sdk.doc(db, AUTH.USERS_COLLECTION, uid), omitUndefined({
+  await sdk.updateDoc(userDoc(uid), omitUndefined({
     ...patch,
     updatedAt: sdk.serverTimestamp(),
   }));
@@ -241,16 +240,14 @@ export async function updateUserProfile(uid, patch) {
 
 export async function deleteUserProfile(uid) {
   if (!usesLiveAuth() || !uid) return;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  await sdk.deleteDoc(sdk.doc(db, AUTH.USERS_COLLECTION, uid));
+  await sdk.deleteDoc(userDoc(uid));
 }
 
 export async function markEmailVerified(uid, verified = true) {
   if (!usesLiveAuth() || !uid) return;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  await sdk.updateDoc(sdk.doc(db, AUTH.USERS_COLLECTION, uid), {
+  await sdk.updateDoc(userDoc(uid), {
     emailVerified: verified,
     updatedAt: sdk.serverTimestamp(),
   });

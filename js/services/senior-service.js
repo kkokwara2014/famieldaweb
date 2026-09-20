@@ -2,7 +2,8 @@ import { AUTH, CARE_STATUS, NOTIFICATION_TYPES } from "../config/constants.js";
 import { createEmergencyContact, createSenior } from "../models/senior.js";
 import { mockSenior } from "./mock-data.js";
 import { storage } from "../core/storage.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { seniorsCol, seniorDoc } from "../core/firestore-paths.js";
 import { logger } from "../core/logger.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession, setSession } from "../auth/session.js";
@@ -58,21 +59,94 @@ function writeLocal(senior) {
   return senior;
 }
 
+function dateString(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value.toDate === "function") return value.toDate().toISOString().slice(0, 10);
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return "";
+}
+
+function addressToString(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (value.formatted) return value.formatted;
+    return [value.street, value.city, value.state, value.postalCode, value.country]
+      .filter(Boolean)
+      .join(", ");
+  }
+  return "";
+}
+
+function addressToMap(value) {
+  if (!value) return null;
+  if (typeof value === "object") {
+    return {
+      street: value.street ?? "",
+      city: value.city ?? "",
+      state: value.state ?? "",
+      country: value.country ?? "",
+      postalCode: value.postalCode ?? "",
+      latitude: value.latitude ?? null,
+      longitude: value.longitude ?? null,
+    };
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  return {
+    street: text,
+    city: "",
+    state: "",
+    country: "",
+    postalCode: "",
+    latitude: null,
+    longitude: null,
+  };
+}
+
+function carePreferencesFrom(value) {
+  if (!value) return {};
+  if (typeof value === "string") return { notes: value };
+  return value;
+}
+
+function toTimestamp(sdk, value) {
+  if (!value) return null;
+  if (typeof value.toDate === "function") return value;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return sdk?.Timestamp?.fromDate ? sdk.Timestamp.fromDate(date) : null;
+}
+
 function fromDoc(id, data = {}) {
-  return createSenior({
+  const senior = createSenior({
     ...data,
     id,
+    displayName: data.displayName || data.name || data.fullName || data.seniorName,
+    dateOfBirth: dateString(data.dateOfBirth || data.dob || data.date_of_birth),
+    address: addressToString(data.address),
+    conditions: data.conditions ?? data.medicalConditions,
+    carePreferences: carePreferencesFrom(data.carePreferences),
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
   });
+  return { ...senior, familyId: data.familyId || senior.familyId || "" };
 }
 
-function toDoc(senior) {
+function toDoc(senior, sdk, { familyId } = {}) {
   const { id: _id, ...rest } = senior;
-  return {
+  const doc = {
     ...rest,
+    dateOfBirth: toTimestamp(sdk, rest.dateOfBirth),
+    address: addressToMap(rest.address),
+    carePreferences: carePreferencesFrom(rest.carePreferences),
     photoURL: rest.photoURL ?? null,
   };
+  const resolvedFamilyId = familyId || rest.familyId;
+  if (resolvedFamilyId) doc.familyId = resolvedFamilyId;
+  else delete doc.familyId;
+  return doc;
 }
 
 export async function linkSeniorToUser(session, seniorId) {
@@ -99,10 +173,9 @@ export async function getSeniorById(id) {
     return record ? createSenior(record) : null;
   }
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
   try {
-    const snap = await sdk.getDoc(sdk.doc(db, AUTH.SENIORS_COLLECTION, id));
+    const snap = await sdk.getDoc(seniorDoc(id));
     if (!snap.exists()) return null;
     return fromDoc(snap.id, snap.data());
   } catch (error) {
@@ -140,11 +213,10 @@ export async function listSeniorsOwnedBy(userId) {
       .filter((item) => item.ownerId === userId);
   }
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
   const snap = await sdk.getDocs(
     sdk.query(
-      sdk.collection(db, AUTH.SENIORS_COLLECTION),
+      seniorsCol(),
       sdk.where("ownerId", "==", userId),
       sdk.limit(QUERY_LIMITS.LOOKUP),
     ),
@@ -161,6 +233,7 @@ export async function createSeniorProfile(input, session = getSession()) {
   assertCanCreateSenior({ session, seniorsOwned: owned.length });
 
   const now = new Date().toISOString();
+  const familyId = session.familyId || input.familyId || session.id;
   const contacts = (input.emergencyContacts ?? []).map((contact) => createEmergencyContact({
     ...contact,
     id: contact.id || newId("ec"),
@@ -181,15 +254,14 @@ export async function createSeniorProfile(input, session = getSession()) {
   if (!usesLiveAuth()) {
     saved = writeLocal(createSenior({ ...draft, id: newId("senior") }));
   } else {
-    const db = getFirebaseDb();
     const sdk = getFirestoreSdk();
-    const ref = sdk.doc(sdk.collection(db, AUTH.SENIORS_COLLECTION));
+    const ref = sdk.doc(seniorsCol());
     await sdk.setDoc(ref, {
-      ...toDoc(draft),
+      ...toDoc(draft, sdk, { familyId }),
       createdAt: sdk.serverTimestamp(),
       updatedAt: sdk.serverTimestamp(),
     });
-    saved = createSenior({ ...draft, id: ref.id });
+    saved = { ...createSenior({ ...draft, id: ref.id }), familyId };
   }
 
   await linkSeniorToUser(session, saved.id);
@@ -241,11 +313,12 @@ export async function updateSeniorProfile(id, patch) {
     return saved;
   }
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const payload = toDoc(next);
+  const payload = toDoc(next, sdk, {
+    familyId: current.familyId || current.ownerId || patch.familyId,
+  });
   delete payload.createdAt;
-  await sdk.updateDoc(sdk.doc(db, AUTH.SENIORS_COLLECTION, id), {
+  await sdk.updateDoc(seniorDoc(id), {
     ...payload,
     updatedAt: sdk.serverTimestamp(),
   });

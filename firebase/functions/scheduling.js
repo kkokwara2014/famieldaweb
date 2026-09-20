@@ -1,5 +1,5 @@
 const { HttpsError } = require("firebase-functions/v2/https");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, FieldPath } = require("firebase-admin/firestore");
 const notifications = require("./notifications");
 const engine = require("./availability-engine");
 const verification = require("./verification");
@@ -7,7 +7,8 @@ const analytics = require("./analytics");
 
 const USERS = "users";
 const SENIORS = "seniors";
-const MEMBERS = "careCircleMembers";
+const MEMBERS = "circleMembers";
+const LEGACY_MEMBERS = "careCircleMembers";
 const VISITS = "scheduleVisits";
 
 const MANAGE_SCHEDULE = "manage_schedule";
@@ -69,16 +70,46 @@ async function loadSenior(seniorId) {
   return { id: snap.id, ...snap.data() };
 }
 
-async function loadVisit(visitId) {
+async function loadVisit(visitId, seniorId) {
   if (!visitId) throw new HttpsError("invalid-argument", "visitId is required.");
-  const snap = await db().doc(`${VISITS}/${visitId}`).get();
-  if (!snap.exists) throw new HttpsError("not-found", "That visit could not be found.");
-  return { id: snap.id, ...snap.data() };
+  if (seniorId) {
+    const snap = await db().doc(`${SENIORS}/${seniorId}/${VISITS}/${visitId}`).get();
+    if (snap.exists) return { id: snap.id, ...snap.data() };
+  }
+  const group = await db().collectionGroup(VISITS)
+    .where(FieldPath.documentId(), "==", visitId)
+    .limit(1)
+    .get();
+  if (!group.empty) {
+    const doc = group.docs[0];
+    return { id: doc.id, ...doc.data() };
+  }
+  // Backward-compatible: pre-migration top-level scheduleVisits.
+  const legacy = await db().doc(`${VISITS}/${visitId}`).get();
+  if (legacy.exists) return { id: legacy.id, ...legacy.data() };
+  throw new HttpsError("not-found", "That visit could not be found.");
 }
 
 async function listMembers(seniorId) {
-  const snap = await db().collection(MEMBERS).where("seniorId", "==", seniorId).get();
-  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  const found = [];
+  const seen = new Set();
+  const snap = await db().collection(`${SENIORS}/${seniorId}/${MEMBERS}`).get();
+  for (const doc of snap.docs) {
+    seen.add(doc.id);
+    found.push({ id: doc.id, ...doc.data() });
+  }
+  // Backward-compatible: pre-migration top-level careCircleMembers.
+  try {
+    const legacy = await db().collection(LEGACY_MEMBERS).where("seniorId", "==", seniorId).get();
+    for (const doc of legacy.docs) {
+      if (seen.has(doc.id)) continue;
+      seen.add(doc.id);
+      found.push({ id: doc.id, ...doc.data() });
+    }
+  } catch (error) {
+    // Legacy collection may be absent; canonical data is authoritative.
+  }
+  return found;
 }
 
 function isSeniorMember(senior, uid) {
@@ -276,7 +307,7 @@ exports.requestScheduleVisit = async (request) => {
 exports.acceptScheduleVisit = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
-  const visit = await loadVisit(request.data?.visitId);
+  const visit = await loadVisit(request.data?.visitId, request.data?.seniorId);
   if (!isAssigned(visit, uid, email)) {
     throw new HttpsError("permission-denied", "That visit is not assigned to you.");
   }
@@ -300,7 +331,7 @@ exports.acceptScheduleVisit = async (request) => {
 exports.declineScheduleVisit = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
-  const visit = await loadVisit(request.data?.visitId);
+  const visit = await loadVisit(request.data?.visitId, request.data?.seniorId);
   if (!isAssigned(visit, uid, email)) {
     throw new HttpsError("permission-denied", "That visit is not assigned to you.");
   }
@@ -325,7 +356,7 @@ exports.declineScheduleVisit = async (request) => {
 exports.cancelScheduleVisit = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
-  const visit = await loadVisit(request.data?.visitId);
+  const visit = await loadVisit(request.data?.visitId, request.data?.seniorId);
   const { user, senior, members } = await householdForVisit(uid, visit);
   assertCanChangeSlot(user, visit, senior, members, uid, email);
   if (![engine.STATUS.REQUESTED, engine.STATUS.ACCEPTED].includes(visit.status)) {
@@ -349,7 +380,7 @@ exports.modifyScheduleVisit = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
   const input = request.data || {};
-  const visit = await loadVisit(input.visitId);
+  const visit = await loadVisit(input.visitId, input.seniorId);
   const { user, senior, members } = await householdForVisit(uid, visit);
   const practitionerOwn = isAssigned(visit, uid, email)
     && visit.professionalKind === "practitioner"
@@ -387,7 +418,7 @@ exports.modifyScheduleVisit = async (request) => {
 exports.extendScheduleVisit = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
-  const visit = await loadVisit(request.data?.visitId);
+  const visit = await loadVisit(request.data?.visitId, request.data?.seniorId);
   const minutes = Number(request.data?.minutes);
   if (!Number.isFinite(minutes) || minutes < engine.MIN_EXTENSION) {
     throw new HttpsError("invalid-argument", "Extend the visit by at least 15 minutes.");
@@ -428,7 +459,7 @@ exports.extendScheduleVisit = async (request) => {
 exports.checkInVisit = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
-  const visit = await loadVisit(request.data?.visitId);
+  const visit = await loadVisit(request.data?.visitId, request.data?.seniorId);
   if (!isAssigned(visit, uid, email)) {
     throw new HttpsError("permission-denied", "That visit is not assigned to you.");
   }
@@ -452,7 +483,7 @@ exports.checkInVisit = async (request) => {
 exports.checkOutVisit = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
-  const visit = await loadVisit(request.data?.visitId);
+  const visit = await loadVisit(request.data?.visitId, request.data?.seniorId);
   if (!isAssigned(visit, uid, email)) {
     throw new HttpsError("permission-denied", "That visit is not assigned to you.");
   }
@@ -493,7 +524,7 @@ exports.checkOutVisit = async (request) => {
 exports.addVisitNote = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
-  const visit = await loadVisit(request.data?.visitId);
+  const visit = await loadVisit(request.data?.visitId, request.data?.seniorId);
   const { user, senior, members } = await householdForVisit(uid, visit);
   if (!isAssigned(visit, uid, email) && !canManageSchedule(user, senior, members)) {
     throw new HttpsError("permission-denied", "You cannot add a note to this visit.");
@@ -518,7 +549,7 @@ exports.addVisitNote = async (request) => {
 exports.submitVisitReport = async (request) => {
   const uid = requireUid(request);
   const email = emailOf(request);
-  const visit = await loadVisit(request.data?.visitId);
+  const visit = await loadVisit(request.data?.visitId, request.data?.seniorId);
   if (!isAssigned(visit, uid, email)) {
     throw new HttpsError("permission-denied", "That visit is not assigned to you.");
   }

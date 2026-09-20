@@ -1,5 +1,4 @@
 import {
-  AUTH,
   ACTIVITY_TYPES,
   CARE_HISTORY_KINDS,
   APPOINTMENT_REMINDER,
@@ -27,8 +26,8 @@ import { createAppointment } from "../models/appointment.js";
 import { createScheduleEvent } from "../models/schedule-event.js";
 import { mockAppointments } from "./mock-data.js";
 import { storage } from "../core/storage.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { getQueryDocs } from "../core/query.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { appointmentsCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession } from "../auth/session.js";
 import { getSeniorForUser } from "./senior-service.js";
@@ -59,15 +58,40 @@ function emailsEqual(a, b) {
   return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 }
 
+function legacyAppointmentStatus(data) {
+  if (data.status) return data.status;
+  const mobile = String(data.mobileStatus || "").trim();
+  if (!mobile) return undefined;
+  if (mobile === "upcoming") return APPOINTMENT_STATUS.SCHEDULED;
+  return mobile;
+}
+
 function appointmentFrom(data) {
-  return createAppointment({
+  const base = createAppointment({
     ...data,
+    title: data.title ?? data.doctor ?? "",
+    location: data.location ?? data.clinic ?? "",
+    status: legacyAppointmentStatus(data),
     reminderSent: Boolean(data.reminderSent),
     reminderAt: toIso(data.reminderAt),
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     cancelledAt: toIso(data.cancelledAt),
   });
+  return {
+    ...base,
+    ...(data.doctor !== undefined ? { doctor: data.doctor } : {}),
+    ...(data.clinic !== undefined ? { clinic: data.clinic } : {}),
+    ...(data.type !== undefined ? { type: data.type } : {}),
+    ...(data.scheduledAt !== undefined ? { scheduledAt: toIso(data.scheduledAt) } : {}),
+    ...(data.assignedUserId !== undefined ? { assignedUserId: data.assignedUserId } : {}),
+    ...(data.assignedDisplayName !== undefined ? { assignedDisplayName: data.assignedDisplayName } : {}),
+    ...(data.assignmentStatus !== undefined ? { assignmentStatus: data.assignmentStatus } : {}),
+    ...(data.durationMinutes !== undefined ? { durationMinutes: data.durationMinutes } : {}),
+    ...(data.transportation !== undefined ? { transportation: data.transportation } : {}),
+    ...(data.notifyEnabled !== undefined ? { notifyEnabled: data.notifyEnabled } : {}),
+    ...(data.mobileStatus !== undefined ? { mobileStatus: data.mobileStatus } : {}),
+  };
 }
 
 function toDoc(record) {
@@ -124,32 +148,28 @@ function matchesPractitioner(item, practitioner) {
   return false;
 }
 
-async function collectionDocs(collection, constraints = [], options = {}) {
-  return getQueryDocs(collection, constraints, { limit: QUERY_LIMITS.WORKSPACE, ...options });
+async function collectionDocs(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.WORKSPACE;
+  const query = sdk.query(collectionRef, ...constraints, sdk.limit(limit));
+  const snap = await sdk.getDocs(query);
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 async function readAppointments(filter = {}) {
   if (!usesLiveAuth()) return localAppointments(filter);
-  const sdk = getFirestoreSdk();
-  const constraints = [];
-  if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
-  else if (filter.practitioner?.userId) {
-    constraints.push(sdk.where("practitionerUserId", "==", filter.practitioner.userId));
-  } else if (filter.practitioner?.email) {
-    constraints.push(sdk.where("practitionerEmail", "==", String(filter.practitioner.email).trim().toLowerCase()));
-  }
-  const docs = await collectionDocs(AUTH.APPOINTMENTS_COLLECTION, constraints);
+  if (!filter.seniorId) return [];
+  const docs = await collectionDocs(appointmentsCol(filter.seniorId));
   return docs
     .map((item) => appointmentFrom(item))
     .filter((item) => matchesFilter(item, filter));
 }
 
-async function readAppointmentById(id) {
-  if (!id) return null;
+async function readAppointmentById(id, seniorId) {
+  if (!id || !seniorId) return null;
   if (!usesLiveAuth()) return localAppointments().find((item) => item.id === id) ?? null;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.APPOINTMENTS_COLLECTION, id));
+  const snap = await sdk.getDoc(sdk.doc(appointmentsCol(seniorId), id));
   if (!snap.exists()) return null;
   return appointmentFrom({ id: snap.id, ...snap.data() });
 }
@@ -158,11 +178,11 @@ async function saveAppointmentRecord(appointment) {
   const record = appointmentFrom({ ...appointment, updatedAt: nowIso() });
   if (!usesLiveAuth()) return appointmentFrom(writeLocalRecord(APPOINTMENTS_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = appointmentsCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.APPOINTMENTS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.APPOINTMENTS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({
     ...record,
     id: ref.id,
@@ -417,7 +437,7 @@ export async function saveAppointment(input = {}, session = getSession()) {
   const ctx = await loadContext(session);
   assertCanManage(ctx);
   const existing = input.id || input.appointmentId
-    ? await readAppointmentById(input.id || input.appointmentId)
+    ? await readAppointmentById(input.id || input.appointmentId, ctx.senior.id)
     : null;
   if (existing && existing.seniorId !== ctx.senior.id) {
     throw new Error("That appointment could not be found.");
@@ -462,7 +482,7 @@ export async function saveAppointment(input = {}, session = getSession()) {
 
 export async function cancelAppointment(appointmentId, reason = "", session = getSession()) {
   const ctx = await loadContext(session);
-  const existing = await readAppointmentById(appointmentId);
+  const existing = await readAppointmentById(appointmentId, ctx.senior.id);
   if (!existing || existing.seniorId !== ctx.senior.id) {
     throw new Error("That appointment could not be found.");
   }
@@ -514,7 +534,7 @@ export async function cancelAppointment(appointmentId, reason = "", session = ge
 
 export async function updateAppointmentStatus(appointmentId, status, session = getSession()) {
   const ctx = await loadContext(session);
-  const existing = await readAppointmentById(appointmentId);
+  const existing = await readAppointmentById(appointmentId, ctx.senior.id);
   if (!existing || existing.seniorId !== ctx.senior.id) {
     throw new Error("That appointment could not be found.");
   }

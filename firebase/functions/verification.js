@@ -176,22 +176,75 @@ async function listDocuments(userId) {
     .sort((a, b) => String(toIso(b.uploadedAt || b.createdAt) || "").localeCompare(String(toIso(a.uploadedAt || a.createdAt) || "")));
 }
 
+function normalizeStatus(value) {
+  const raw = textOf(value).toLowerCase();
+  if (raw === "underreview" || raw === "under review" || raw === "in_review" || raw === "inreview") {
+    return STATUS.UNDER_REVIEW;
+  }
+  return Object.values(STATUS).includes(raw) ? raw : STATUS.PENDING;
+}
+
+function toDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value.toDate === "function") return value.toDate();
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (typeof value._seconds === "number") return new Date(value._seconds * 1000);
+  if (typeof value.seconds === "number") return new Date(value.seconds * 1000);
+  return null;
+}
+
+function userVerificationMirror(record = {}) {
+  return {
+    status: record.status || STATUS.PENDING,
+    professionalType: record.professionalType || null,
+    licenseNumber: record.licenseNumber || "",
+    licenseState: record.licenseState || "",
+    licenseExpiresAt: record.licenseExpiresAt || "",
+    issuer: record.issuer || "",
+    notes: record.notes || "",
+    reviewNotes: record.reviewNotes || "",
+    reviewedBy: record.reviewedBy || "",
+    reviewedByName: record.reviewedByName || "",
+    reviewedAt: toDate(record.reviewedAt),
+    submittedAt: toDate(record.submittedAt),
+    verifiedAt: toDate(record.verifiedAt),
+  };
+}
+
+async function writeUserVerificationMirror(uid, record = {}) {
+  if (!uid) return;
+  const mirror = userVerificationMirror(record);
+  await db().doc(`${USERS}/${uid}`).set({
+    verificationStatus: mirror.status,
+    verifiedAt: mirror.verifiedAt,
+    professionalVerification: mirror,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
 function draftFromUser(user) {
+  const embedded = user.professionalVerification && typeof user.professionalVerification === "object"
+    ? user.professionalVerification
+    : {};
   return {
     userId: user.id,
     email: emailOf(user.email),
     displayName: user.displayName || "",
     role: user.role,
-    professionalType: user.professionalType || null,
-    status: STATUS.PENDING,
-    licenseNumber: "",
-    licenseState: "",
-    licenseExpiresAt: "",
-    issuer: "",
-    notes: "",
-    reviewNotes: "",
-    reviewedBy: "",
-    reviewedByName: "",
+    professionalType: embedded.professionalType || user.professionalType || null,
+    status: normalizeStatus(embedded.status || user.verificationStatus || STATUS.PENDING),
+    licenseNumber: embedded.licenseNumber || "",
+    licenseState: embedded.licenseState || "",
+    licenseExpiresAt: embedded.licenseExpiresAt || "",
+    issuer: embedded.issuer || "",
+    notes: embedded.notes || "",
+    reviewNotes: embedded.reviewNotes || "",
+    reviewedBy: embedded.reviewedBy || "",
+    reviewedByName: embedded.reviewedByName || "",
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   };
@@ -213,22 +266,19 @@ async function ensureRecord(user) {
       patch.updatedAt = FieldValue.serverTimestamp();
       await ref.set(patch, { merge: true });
     }
-    if (!user.verificationStatus) {
-      await db().doc(`${USERS}/${user.id}`).set({
-        verificationStatus: current.status || STATUS.PENDING,
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
+    const merged = { id: ref.id, ...current, ...patch };
+    const status = current.status || STATUS.PENDING;
+    if (!user.verificationStatus || !user.professionalVerification || user.verificationStatus !== status) {
+      await writeUserVerificationMirror(user.id, serializeVerification(merged, []));
     }
-    return serializeVerification({ id: ref.id, ...current, ...patch }, await listDocuments(user.id));
+    return serializeVerification(merged, await listDocuments(user.id));
   }
 
   const draft = draftFromUser(user);
   await ref.set(draft);
-  await db().doc(`${USERS}/${user.id}`).set({
-    verificationStatus: STATUS.PENDING,
-    updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-  return serializeVerification({ id: ref.id, ...draft, createdAt: new Date(), updatedAt: new Date() }, []);
+  const created = { id: ref.id, ...draft, createdAt: new Date(), updatedAt: new Date() };
+  await writeUserVerificationMirror(user.id, serializeVerification(created, []));
+  return serializeVerification(created, []);
 }
 
 function submitReady(record, documents) {
@@ -289,7 +339,9 @@ exports.saveVerificationProfile = async (request) => {
     updatedAt: FieldValue.serverTimestamp(),
   };
   await db().doc(`${VERIFICATIONS}/${user.id}`).set(patch, { merge: true });
-  return { verification: await ensureRecord(user) };
+  const saved = await ensureRecord(user);
+  await writeUserVerificationMirror(user.id, saved);
+  return { verification: saved };
 };
 
 exports.addVerificationDocument = async (request) => {
@@ -361,11 +413,8 @@ exports.submitProfessionalVerification = async (request) => {
     previousStatus: current.status,
     updatedAt: now,
   }, { merge: true });
-  await db().doc(`${USERS}/${user.id}`).set({
-    verificationStatus: STATUS.UNDER_REVIEW,
-    updatedAt: now,
-  }, { merge: true });
   const saved = await ensureRecord(user);
+  await writeUserVerificationMirror(user.id, saved);
   await notifyAdmins({
     type: notifications.TYPES.VERIFICATION || "verification",
     title: `${saved.displayName || "A professional"} submitted verification`,
@@ -507,13 +556,9 @@ exports.reviewProfessionalVerification = async (request) => {
 
   patch.status = nextStatus;
   await ref.set(patch, { merge: true });
-  await db().doc(`${USERS}/${userId}`).set({
-    verificationStatus: nextStatus,
-    verifiedAt: nextStatus === STATUS.VERIFIED ? now : (current.verifiedAt || null),
-    updatedAt: now,
-  }, { merge: true });
-  await writeAudit(admin, `verification.${action}`, { targetId: userId, notes: reviewNotes, status: nextStatus });
   const saved = serializeVerification({ id: userId, ...snap.data(), ...patch }, current.documents);
+  await writeUserVerificationMirror(userId, saved);
+  await writeAudit(admin, `verification.${action}`, { targetId: userId, notes: reviewNotes, status: nextStatus });
   await notifyProfessional(saved, {
     type: "verification",
     title,
@@ -534,7 +579,9 @@ exports.assertEligibleForVisits = async function assertEligibleForVisits(userId,
     if (snap.exists) record = snap.data();
     if (!record) {
       const userSnap = await db().doc(`${USERS}/${userId}`).get();
-      if (userSnap.exists && userSnap.data().verificationStatus === STATUS.SUSPENDED) {
+      const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+      const embeddedStatus = userData.professionalVerification?.status;
+      if (userData.verificationStatus === STATUS.SUSPENDED || embeddedStatus === STATUS.SUSPENDED) {
         throw new HttpsError("failed-precondition", "This professional’s verification is suspended.");
       }
     }

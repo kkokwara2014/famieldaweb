@@ -1,7 +1,7 @@
-import { AUTH } from "../config/constants.js";
 import { createSupportTicket } from "../models/support-ticket.js";
 import { getSession } from "../auth/session.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { supportTicketsCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { createSupportTicketRequest, listLocalSupportTickets } from "./admin-service.js";
 
@@ -32,11 +32,10 @@ function belongsToSession(ticket, session) {
 }
 
 async function listLiveTickets(session) {
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  if (!db || !sdk || !session?.id) return [];
+  if (!sdk || !session?.id) return [];
   const run = (constraints) => sdk.getDocs(sdk.query(
-    sdk.collection(db, AUTH.SUPPORT_TICKETS_COLLECTION),
+    supportTicketsCol(),
     ...constraints,
     sdk.limit(QUERY_LIMITS.PAGE),
   ));

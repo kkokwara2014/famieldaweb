@@ -108,7 +108,7 @@ function seedMockMonitoring() {
     },
     {
       kind: MONITORING_KINDS.FUNCTION,
-      name: "requestScheduleVisit",
+      name: "saveCareShift",
       ok: true,
       status: "slow",
       durationMs: 3120,

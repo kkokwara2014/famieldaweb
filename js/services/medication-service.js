@@ -1,5 +1,4 @@
 import {
-  AUTH,
   ACTIVITY_TYPES,
   CARE_HISTORY_KINDS,
   CIRCLE_STATUS,
@@ -40,8 +39,8 @@ import { createMedication, createMedicationDose } from "../models/medication.js"
 import { createScheduleEvent } from "../models/schedule-event.js";
 import { mockMedicationDoses, mockMedications } from "./mock-data.js";
 import { storage } from "../core/storage.js";
-import { getFirebaseDb, getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { getQueryDocs } from "../core/query.js";
+import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
+import { medicationDosesCol, medicationsCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession } from "../auth/session.js";
 import { getSeniorForUser, updateSeniorProfile } from "./senior-service.js";
@@ -74,9 +73,17 @@ function emailsEqual(a, b) {
   return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 }
 
+function legacyMedicationStatus(data) {
+  if (data.status) return data.status;
+  if (data.isActive === false) return MEDICATION_STATUS.PAUSED;
+  if (data.isActive === true) return MEDICATION_STATUS.ACTIVE;
+  return undefined;
+}
+
 function medicationFrom(data) {
-  return createMedication({
+  const base = createMedication({
     ...data,
+    status: legacyMedicationStatus(data),
     reminderSent: Boolean(data.reminderSent),
     reminderAt: toIso(data.reminderAt),
     createdAt: toIso(data.createdAt),
@@ -84,14 +91,38 @@ function medicationFrom(data) {
     endedAt: toIso(data.endedAt),
     weekday: data.weekday == null || data.weekday === "" ? null : Number(data.weekday),
   });
+  return {
+    ...base,
+    ...(data.route !== undefined ? { route: data.route } : {}),
+    ...(data.scheduleTimes !== undefined ? { scheduleTimes: data.scheduleTimes } : {}),
+    ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+    ...(data.prescribingDoctor !== undefined ? { prescribingDoctor: data.prescribingDoctor } : {}),
+    ...(data.pharmacy !== undefined ? { pharmacy: data.pharmacy } : {}),
+    ...(data.instructions !== undefined ? { instructions: data.instructions } : {}),
+    ...(data.notifyEnabled !== undefined ? { notifyEnabled: data.notifyEnabled } : {}),
+  };
+}
+
+function legacyDoseOutcome(data) {
+  if (data.outcome) return data.outcome;
+  if (Object.values(MEDICATION_DOSE_OUTCOME).includes(data.status)) return data.status;
+  return "";
 }
 
 function doseFrom(data) {
-  return createMedicationDose({
+  const base = createMedicationDose({
     ...data,
+    name: data.name ?? data.medicationName ?? "",
+    outcome: legacyDoseOutcome(data),
     recordedAt: toIso(data.recordedAt),
     slotKey: data.slotKey || doseSlotKey(data.date, data.time),
   });
+  return {
+    ...base,
+    ...(data.status !== undefined ? { status: data.status } : {}),
+    ...(data.scheduledAt !== undefined ? { scheduledAt: toIso(data.scheduledAt) } : {}),
+    ...(data.takenAt !== undefined ? { takenAt: toIso(data.takenAt) } : {}),
+  };
 }
 
 function toDoc(record) {
@@ -145,41 +176,38 @@ function localDoses(filter = {}) {
     });
 }
 
-async function collectionDocs(collection, constraints = [], options = {}) {
-  return getQueryDocs(collection, constraints, { limit: QUERY_LIMITS.WORKSPACE, ...options });
+async function collectionDocs(collectionRef, constraints = [], options = {}) {
+  const sdk = getFirestoreSdk();
+  const limit = options.limit ?? QUERY_LIMITS.WORKSPACE;
+  const query = sdk.query(collectionRef, ...constraints, sdk.limit(limit));
+  const snap = await sdk.getDocs(query);
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 async function readMedications(filter = {}) {
   if (!usesLiveAuth()) return localMedications(filter);
-  const sdk = getFirestoreSdk();
-  const constraints = [];
-  if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
-  const docs = await collectionDocs(AUTH.MEDICATIONS_COLLECTION, constraints);
+  if (!filter.seniorId) return [];
+  const docs = await collectionDocs(medicationsCol(filter.seniorId));
   return docs.map((item) => medicationFrom(item));
 }
 
 async function readDoses(filter = {}) {
   if (!usesLiveAuth()) return localDoses(filter);
-  const sdk = getFirestoreSdk();
-  const constraints = [];
-  if (filter.medicationId) constraints.push(sdk.where("medicationId", "==", filter.medicationId));
-  else if (filter.seniorId) constraints.push(sdk.where("seniorId", "==", filter.seniorId));
-  const docs = await collectionDocs(AUTH.MEDICATION_DOSES_COLLECTION, constraints);
+  if (!filter.seniorId) return [];
+  const docs = await collectionDocs(medicationDosesCol(filter.seniorId));
   return docs
     .map((item) => doseFrom(item))
     .filter((item) => {
-      if (filter.seniorId && item.seniorId !== filter.seniorId) return false;
       if (filter.medicationId && item.medicationId !== filter.medicationId) return false;
       return true;
     });
 }
 
-async function readMedicationById(id) {
-  if (!id) return null;
+async function readMedicationById(id, seniorId) {
+  if (!id || !seniorId) return null;
   if (!usesLiveAuth()) return localMedications().find((item) => item.id === id) ?? null;
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
-  const snap = await sdk.getDoc(sdk.doc(db, AUTH.MEDICATIONS_COLLECTION, id));
+  const snap = await sdk.getDoc(sdk.doc(medicationsCol(seniorId), id));
   if (!snap.exists()) return null;
   return medicationFrom({ id: snap.id, ...snap.data() });
 }
@@ -188,11 +216,11 @@ async function saveMedicationRecord(medication) {
   const record = medicationFrom({ ...medication, updatedAt: nowIso() });
   if (!usesLiveAuth()) return medicationFrom(writeLocalRecord(MEDICATIONS_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = medicationsCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.MEDICATIONS_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.MEDICATIONS_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = { ...payload, updatedAt: sdk.serverTimestamp() };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
@@ -204,11 +232,11 @@ async function saveDoseRecord(dose) {
   const record = doseFrom({ ...dose, recordedAt: dose.recordedAt || nowIso() });
   if (!usesLiveAuth()) return doseFrom(writeLocalRecord(DOSES_KEY, record));
 
-  const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
+  const collection = medicationDosesCol(record.seniorId);
   const ref = record.id
-    ? sdk.doc(db, AUTH.MEDICATION_DOSES_COLLECTION, record.id)
-    : sdk.doc(sdk.collection(db, AUTH.MEDICATION_DOSES_COLLECTION));
+    ? sdk.doc(collection, record.id)
+    : sdk.doc(collection);
   const payload = toDoc({ ...record, id: ref.id });
   const data = { ...payload };
   if (!payload.recordedAt) data.recordedAt = sdk.serverTimestamp();
@@ -563,7 +591,7 @@ export async function saveMedication(input = {}, session = getSession()) {
   assertCanManage(ctx);
   assertPlus(ctx);
   const existing = input.id || input.medicationId
-    ? await readMedicationById(input.id || input.medicationId)
+    ? await readMedicationById(input.id || input.medicationId, ctx.senior.id)
     : null;
   if (existing && existing.seniorId !== ctx.senior.id) {
     throw new Error("That medication could not be found.");
@@ -611,7 +639,7 @@ export async function updateMedicationStatus(medicationId, status, session = get
   const ctx = await loadContext(session);
   assertCanManage(ctx);
   assertPlus(ctx);
-  const existing = await readMedicationById(medicationId);
+  const existing = await readMedicationById(medicationId, ctx.senior.id);
   if (!existing || existing.seniorId !== ctx.senior.id) {
     throw new Error("That medication could not be found.");
   }
@@ -648,7 +676,7 @@ export async function updateMedicationStatus(medicationId, status, session = get
 
 export async function logMedicationDose(medicationId, input = {}, session = getSession()) {
   const ctx = await loadContext(session);
-  const existing = await readMedicationById(medicationId);
+  const existing = await readMedicationById(medicationId, ctx.senior.id);
   if (!existing || existing.seniorId !== ctx.senior.id) {
     throw new Error("That medication could not be found.");
   }
@@ -662,7 +690,7 @@ export async function logMedicationDose(medicationId, input = {}, session = getS
   const date = String(input.date || todayIso()).trim();
   const time = String(input.time || existing.time || "").trim();
   const slotKey = doseSlotKey(date, time);
-  const doses = await readDoses({ medicationId: existing.id });
+  const doses = await readDoses({ seniorId: ctx.senior.id, medicationId: existing.id });
   const prior = doses.find((item) => item.slotKey === slotKey);
   const saved = await saveDoseRecord({
     ...(prior ?? createMedicationDose({
