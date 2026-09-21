@@ -160,21 +160,17 @@ async function readLiveNotices(session = getSession(), options = {}) {
     if (uid) {
       queries.push(collectionDocs(userNotificationsCol(uid), [
         sdk.orderBy("createdAt", "desc"),
-      ], { limit }).catch(() => collectionDocs(userNotificationsCol(uid), [], { limit })));
+      ], { limit }).catch(() => collectionDocs(userNotificationsCol(uid), [], { limit }).catch(() => [])));
       queries.push(collectionDocs(legacyNoticesCol(), [
         sdk.where("userId", "==", uid),
         sdk.orderBy("createdAt", "desc"),
-      ], { limit }).catch(() => collectionDocs(legacyNoticesCol(), [
-        sdk.where("userId", "==", uid),
-      ], { limit })));
+      ], { limit }).catch(() => []));
     }
     if (email) {
       queries.push(collectionDocs(legacyNoticesCol(), [
         sdk.where("email", "==", email),
         sdk.orderBy("createdAt", "desc"),
-      ], { limit }).catch(() => collectionDocs(legacyNoticesCol(), [
-        sdk.where("email", "==", email),
-      ], { limit })));
+      ], { limit }).catch(() => []));
     }
     const batches = await Promise.all(queries);
     return sortNotices(dedupeNotices(batches.flat()));
@@ -411,7 +407,7 @@ export async function getNotificationPreferences(session = getSession()) {
   const db = getFirebaseDb();
   const sdk = getFirestoreSdk();
   const snap = await sdk.getDoc(sdk.doc(db, AUTH.USERS_COLLECTION, session.id));
-  const prefs = snap.exists() ? snap.data()?.notificationPrefs : session.notificationPrefs;
+  const prefs = snap.exists() ? snap.data()?.notificationPreferences : session.notificationPrefs;
   return normalizeNotificationPrefs(prefs);
 }
 
@@ -422,7 +418,7 @@ export async function saveNotificationPreferences(prefs, session = getSession())
     setSession({ ...session, notificationPrefs: next });
   }
   if (usesLiveAuth() && session?.id) {
-    await updateUserProfile(session.id, { notificationPrefs: next });
+    await updateUserProfile(session.id, { notificationPreferences: next });
   }
   return next;
 }

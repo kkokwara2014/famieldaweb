@@ -133,7 +133,8 @@
         ".env",
         ".env.*",
         ".secret.local",
-        "ensure-plus-catalog.js"
+        "ensure-plus-catalog.js",
+        "create-admin.js"
       ]
     }
   ]

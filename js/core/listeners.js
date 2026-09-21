@@ -68,7 +68,10 @@ export function subscribeShared(key, start, handler) {
       group.last = value;
       group.handlers.forEach((fn) => {
         try {
-          fn(value);
+          const result = fn(value);
+          if (result && typeof result.then === "function") {
+            result.catch((error) => logger.warn("Shared listener handler failed.", error));
+          }
         } catch (error) {
           logger.warn("Shared listener handler failed.", error);
         }
@@ -77,7 +80,16 @@ export function subscribeShared(key, start, handler) {
     group.stop = start(emit);
   }
   group.handlers.add(handler);
-  if (group.last !== undefined) handler(group.last);
+  if (group.last !== undefined) {
+    try {
+      const result = handler(group.last);
+      if (result && typeof result.then === "function") {
+        result.catch((error) => logger.warn("Shared listener handler failed.", error));
+      }
+    } catch (error) {
+      logger.warn("Shared listener handler failed.", error);
+    }
+  }
   return () => {
     group.handlers.delete(handler);
     if (group.handlers.size) return;

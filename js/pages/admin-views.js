@@ -285,11 +285,14 @@ export function userDetailHtml(detail) {
         </div>
         <div class="field">
           <label for="admin-user-role">Role</label>
-          <select id="admin-user-role" name="role">
-            ${[ROLES.FAMILY, ROLES.CAREGIVER, ROLES.HEALTH_PRACTITIONER, ROLES.ADMIN].map((role) => `
+          <select id="admin-user-role" name="role" ${user.role === ROLES.ADMIN ? "disabled" : ""}>
+            ${(user.role === ROLES.ADMIN
+              ? [ROLES.ADMIN]
+              : [ROLES.FAMILY, ROLES.CAREGIVER, ROLES.HEALTH_PRACTITIONER]).map((role) => `
               <option value="${role}" ${user.role === role ? "selected" : ""}>${escapeHtml(roleLabel(role))}</option>
             `).join("")}
           </select>
+          ${user.role === ROLES.ADMIN ? `<p class="hint">Admin roles are managed with the local create-admin script.</p>` : ""}
         </div>
         <div class="admin-detail__actions">
           <button class="btn btn--primary btn--sm" type="submit">Save</button>

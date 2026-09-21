@@ -64,6 +64,13 @@ service cloud.firestore {
       ];
     }
 
+    // Admin is a privileged role granted only by the local create-admin script
+    // (Admin SDK, bypasses rules). Clients may keep an existing admin role on
+    // their own profile but can never elevate a non-admin to admin.
+    function adminRoleAllowed(newRole, currentRole) {
+      return newRole != 'admin' || currentRole == 'admin';
+    }
+
     function validUserStatus(value) {
       return value in ['active', 'inactive', 'suspended', 'pending'];
     }
@@ -463,19 +470,33 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isPlatformAdmin();
       allow create: if isOwner(userId)
         && request.resource.data.keys().hasAll(['email', 'displayName', 'createdAt'])
-        && (!('role' in request.resource.data) || validUserRole(request.resource.data.role))
+        && (!('role' in request.resource.data)
+          || request.resource.data.role == null
+          || (validUserRole(request.resource.data.role)
+            && adminRoleAllowed(request.resource.data.role, '')))
         && (!('status' in request.resource.data) || validUserStatus(request.resource.data.status))
         && (!('plan' in request.resource.data) || request.resource.data.plan == 'free')
         && !('stripeCustomerId' in request.resource.data)
         && !('stripeSubscriptionId' in request.resource.data);
       allow update: if (isOwner(userId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'displayName', 'firstName', 'lastName', 'email', 'phone', 'phoneVerified',
-            'photoUrl', 'location', 'notificationPreferences', 'lastLoginAt', 'updatedAt',
-            'fcmTokens', 'liveAvailability', 'professionalProfile', 'discoverable',
-            'professionalVerification', 'role', 'professionalType'
+            'displayName', 'firstName', 'lastName', 'email', 'emailVerified', 'phone',
+            'phoneVerified', 'photoUrl', 'location', 'notificationPreferences',
+            'lastLoginAt', 'lastLoginPlatform', 'updatedAt', 'fcmTokens',
+            'liveAvailability', 'professionalProfile', 'discoverable',
+            'professionalVerification', 'role', 'professionalType', 'seniorId',
+            'onboardingPath', 'familyRelationship', 'careTypes', 'specialty',
+            'onboardingCompletedAt', 'roleSelectedAt'
           ])
-          && (!('role' in request.resource.data) || validUserRole(request.resource.data.role))
+          && (!('emailVerified' in request.resource.data)
+            || (('email_verified' in request.auth.token)
+              && request.auth.token.email_verified == request.resource.data.emailVerified))
+          && (!('role' in request.resource.data)
+            || request.resource.data.role == null
+            || (validUserRole(request.resource.data.role)
+              && adminRoleAllowed(
+                request.resource.data.role,
+                ('role' in resource.data) ? resource.data.role : '')))
           && (!('professionalType' in request.resource.data)
             || request.resource.data.professionalType == null
             || professionalTypeMatchesRole(
@@ -501,7 +522,12 @@ service cloud.firestore {
         || (isPlatformAdmin()
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['role', 'status', 'updatedAt', 'professionalType', 'professionalVerification'])
-          && (!('role' in request.resource.data) || validUserRole(request.resource.data.role))
+          && (!('role' in request.resource.data)
+            || request.resource.data.role == null
+            || (validUserRole(request.resource.data.role)
+              && adminRoleAllowed(
+                request.resource.data.role,
+                ('role' in resource.data) ? resource.data.role : '')))
           && (!('status' in request.resource.data) || validUserStatus(request.resource.data.status))
           && (!('professionalVerification' in request.resource.data)
             || validProfessionalVerification(

@@ -13,3 +13,6 @@ ui-debug.log
 *.log
 .vscode/
 .idea/
+
+# Local-only admin bootstrap script (never deployed, never committed)
+firebase/functions/create-admin.js

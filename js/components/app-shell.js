@@ -161,9 +161,9 @@ export async function initAppShell({ page, session, title, crumbs } = {}) {
 
   const appRoot = `${getBasePath()}/app`;
   const [unread, plan, notices] = await Promise.all([
-    unreadCount(),
-    getCurrentPlan(),
-    getNotificationFeed(session, { appRoot }),
+    unreadCount().catch(() => 0),
+    getCurrentPlan().catch(() => null),
+    getNotificationFeed(session, { appRoot }).catch(() => []),
   ]);
   const heading = pageTitle(page, title);
 

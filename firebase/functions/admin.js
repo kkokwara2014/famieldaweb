@@ -480,12 +480,17 @@ exports.adminUpdateUser = async (request) => {
     if (!ASSIGNABLE_ROLES.has(role)) {
       throw new HttpsError("invalid-argument", "That role cannot be assigned.");
     }
+    if (role === ROLES.ADMIN && current.role !== ROLES.ADMIN) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Admin accounts can only be created with the local create-admin script.",
+      );
+    }
     if (current.role === ROLES.ADMIN && role !== ROLES.ADMIN) {
-      const admins = await db().collection(USERS).where("role", "==", ROLES.ADMIN).get();
-      const remaining = admins.docs.filter((doc) => doc.id !== userId && doc.data()?.status !== ACCOUNT.SUSPENDED);
-      if (!remaining.length) {
-        throw new HttpsError("failed-precondition", "Famielda needs at least one active admin.");
-      }
+      throw new HttpsError(
+        "failed-precondition",
+        "Admin roles can only be changed with the local create-admin script.",
+      );
     }
     patch.role = role;
     if (role === ROLES.FAMILY || role === ROLES.ADMIN) {
