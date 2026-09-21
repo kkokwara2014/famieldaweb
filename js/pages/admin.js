@@ -10,7 +10,7 @@ import {
 } from "../config/admin.js";
 import { toCsv, downloadTextFile } from "../config/reports.js";
 import { PRODUCT_EVENT_META } from "../config/analytics.js";
-import { confirmDialog, promptDialog } from "../components/modal.js";
+import { confirmDialog, previewDialog, promptDialog } from "../components/modal.js";
 import { toast } from "../components/toast.js";
 import { loaderBlock, setButtonLoading } from "../components/loader.js";
 import { errorState } from "../components/error-state.js";
@@ -476,11 +476,13 @@ function bindAdmin(host) {
     try {
       const blob = await downloadVerificationFile(button.dataset.downloadVdoc);
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = button.dataset.fileName || "document";
-      link.click();
-      URL.revokeObjectURL(url);
+      await previewDialog({
+        title: button.dataset.fileName || "Document",
+        url,
+        contentType: blob.type,
+        fileName: button.dataset.fileName || "document",
+        onClose: () => URL.revokeObjectURL(url),
+      });
     } catch (error) {
       toast(error.message, { type: "error" });
     }

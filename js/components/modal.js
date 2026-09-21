@@ -251,6 +251,86 @@ export function promptDialog({
   });
 }
 
+export function previewDialog({
+  title = "Document",
+  url,
+  contentType = "",
+  fileName = "",
+  onClose = null,
+} = {}) {
+  return new Promise((resolve) => {
+    dismissActive();
+
+    const modal = document.createElement("div");
+    modal.className = "modal";
+    modal.dataset.modal = "preview";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "preview-dialog-title");
+
+    const type = String(contentType || "").toLowerCase();
+    const isPdf = type.includes("pdf") || /\.pdf$/i.test(String(fileName));
+    const isImage = type.startsWith("image/");
+    let media;
+    if (isImage) {
+      media = `<img class="media-preview__image" src="${url}" alt="${escapeHtml(title)}">`;
+    } else if (isPdf) {
+      media = `<iframe class="media-preview__frame" src="${url}" title="${escapeHtml(title)}"></iframe>`;
+    } else {
+      media = `<div class="media-preview__fallback">This file type can't be previewed here. Use Download.</div>`;
+    }
+
+    modal.innerHTML = `
+      <div class="modal__backdrop" data-close-modal></div>
+      <div class="modal__panel modal__panel--media" role="document">
+        <button type="button" class="modal__dismiss" data-close-modal aria-label="Close preview">✕</button>
+        <h2 id="preview-dialog-title">${escapeHtml(title)}</h2>
+        <div class="media-preview">${media}</div>
+        <div class="modal__actions">
+          <a class="btn btn--ghost" href="${url}" download="${escapeHtml(fileName || title)}">Download</a>
+          <button type="button" class="btn btn--primary" data-close-modal>Close</button>
+        </div>
+      </div>
+    `;
+
+    const previousFocus = document.activeElement;
+    const finish = () => {
+      if (activeDialog !== modal) return;
+      activeDialog = null;
+      modal.remove();
+      document.body.classList.remove("modal-open");
+      document.removeEventListener("keydown", onKey);
+      if (previousFocus && typeof previousFocus.focus === "function") {
+        previousFocus.focus();
+      }
+      try {
+        onClose?.();
+      } catch {
+        /* ignore */
+      }
+      resolve();
+    };
+
+    const onKey = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish();
+      }
+    };
+
+    modal.addEventListener("click", (event) => {
+      if (event.target.closest("[data-close-modal]")) finish();
+    });
+
+    document.addEventListener("keydown", onKey);
+    document.body.append(modal);
+    document.body.classList.add("modal-open");
+    activeDialog = modal;
+    requestAnimationFrame(() => modal.classList.add("is-open"));
+    modal.querySelector(".modal__actions [data-close-modal]")?.focus();
+  });
+}
+
 function dismissActive() {
   if (!activeDialog) return;
   activeDialog.remove();

@@ -883,6 +883,44 @@
   justify-content: center;
 }
 
+/* In-page verification document preview (image + PDF) */
+.modal__panel--media {
+  width: min(100%, 64rem);
+  padding-bottom: 1.5rem;
+}
+
+.media-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  margin-bottom: 1.2rem;
+  background: var(--color-line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.media-preview__image {
+  display: block;
+  max-width: 100%;
+  max-height: min(72vh, 46rem);
+  object-fit: contain;
+}
+
+.media-preview__frame {
+  display: block;
+  width: 100%;
+  height: min(72vh, 46rem);
+  border: 0;
+  background: var(--color-paper);
+}
+
+.media-preview__fallback {
+  padding: 2rem 1.5rem;
+  text-align: center;
+  color: var(--color-stone);
+}
+
 .modal-open {
   overflow: hidden;
 }
