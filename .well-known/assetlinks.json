@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "org.famielda",
+      "sha256_cert_fingerprints": [
+        "E0:39:45:F3:E9:9A:A5:16:35:92:13:B7:4B:9C:A5:89:86:B8:F3:E6:7C:D8:8F:96:84:76:93:2C:BF:78:16:4D",
+        "PASTE_RELEASE_SHA256_FINGERPRINT_HERE"
+      ]
+    }
+  }
+]

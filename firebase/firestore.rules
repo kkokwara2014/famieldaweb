@@ -869,7 +869,7 @@ service cloud.firestore {
           || (canUpdateAppointmentStatus(seniorId)
             && (!isHealthPractitionerAppUser() || healthPractitionerTypeIn(['nurse', 'md']))
             && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['status', 'statusUpdatedBy', 'updatedAt'])
+              .hasOnly(['status', 'mobileStatus', 'statusUpdatedBy', 'updatedAt'])
             && validAppointmentStatus(request.resource.data.status))
           || (isSignedIn()
             && resource.data.assignedUserId == request.auth.uid
