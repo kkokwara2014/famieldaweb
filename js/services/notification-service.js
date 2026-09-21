@@ -21,11 +21,6 @@ import { logger } from "../core/logger.js";
 const NOTICES_KEY = "notifications";
 const PREFS_KEY = "notificationPrefs";
 const TOKENS_KEY = "fcmTokens";
-const LEGACY_NOTICES = "notifications";
-
-function legacyNoticesCol() {
-  return getFirestoreSdk().collection(getFirebaseDb(), LEGACY_NOTICES);
-}
 
 async function resolveUidByEmail(email) {
   const normalized = String(email || "").trim().toLowerCase();
@@ -154,21 +149,10 @@ async function readLiveNotices(session = getSession(), options = {}) {
   const limit = options.limit ?? QUERY_LIMITS.FEED;
   const key = `notices:${session.id || ""}:${session.email || ""}:${limit}`;
   return remember(key, CACHE_TTL_MS.FEED, async () => {
-    const email = String(session.email || "").trim().toLowerCase();
     const uid = await resolveSessionUid(session);
     const queries = [];
     if (uid) {
       queries.push(collectionDocs(userNotificationsCol(uid), [
-        sdk.orderBy("createdAt", "desc"),
-      ], { limit }).catch(() => collectionDocs(userNotificationsCol(uid), [], { limit }).catch(() => [])));
-      queries.push(collectionDocs(legacyNoticesCol(), [
-        sdk.where("userId", "==", uid),
-        sdk.orderBy("createdAt", "desc"),
-      ], { limit }).catch(() => []));
-    }
-    if (email) {
-      queries.push(collectionDocs(legacyNoticesCol(), [
-        sdk.where("email", "==", email),
         sdk.orderBy("createdAt", "desc"),
       ], { limit }).catch(() => []));
     }
@@ -204,7 +188,6 @@ export async function unreadCount(session = getSession()) {
   if (!session?.id && !session?.email) return 0;
   const sdk = getFirestoreSdk();
   const limit = QUERY_LIMITS.UNREAD;
-  const email = String(session.email || "").trim().toLowerCase();
   const uid = await resolveSessionUid(session);
   const queries = [];
   if (uid) {
@@ -213,16 +196,6 @@ export async function unreadCount(session = getSession()) {
     ], { limit }).catch(() => collectionDocs(userNotificationsCol(uid), [
       sdk.where("read", "==", false),
     ], { limit }).catch(() => [])));
-    queries.push(collectionDocs(legacyNoticesCol(), [
-      sdk.where("userId", "==", uid),
-      sdk.where("read", "==", false),
-    ], { limit }).catch(() => []));
-  }
-  if (email) {
-    queries.push(collectionDocs(legacyNoticesCol(), [
-      sdk.where("email", "==", email),
-      sdk.where("read", "==", false),
-    ], { limit }).catch(() => []));
   }
   const items = sortNotices(dedupeNotices((await Promise.all(queries)).flat()));
   return items.filter((item) => !item.read).length;
@@ -235,16 +208,10 @@ export async function getNotification(id, session = getSession()) {
   }
   const sdk = getFirestoreSdk();
   const uid = await resolveSessionUid(session);
-  if (uid) {
-    const snap = await sdk.getDoc(sdk.doc(userNotificationsCol(uid), id));
-    if (snap.exists()) {
-      const notice = noticeFrom({ id: snap.id, ...snap.data() });
-      return belongsToSession(notice, session) ? notice : null;
-    }
-  }
-  const legacySnap = await sdk.getDoc(sdk.doc(legacyNoticesCol(), id)).catch(() => null);
-  if (!legacySnap?.exists?.()) return null;
-  const notice = noticeFrom({ id: legacySnap.id, ...legacySnap.data() });
+  if (!uid) return null;
+  const snap = await sdk.getDoc(sdk.doc(userNotificationsCol(uid), id));
+  if (!snap.exists()) return null;
+  const notice = noticeFrom({ id: snap.id, ...snap.data() });
   return belongsToSession(notice, session) ? notice : null;
 }
 
@@ -366,9 +333,8 @@ async function saveNoticePatch(id, patch, uid = "") {
     return next.find((item) => item.id === id) ?? null;
   }
   const sdk = getFirestoreSdk();
-  const ref = uid
-    ? sdk.doc(userNotificationsCol(uid), id)
-    : sdk.doc(legacyNoticesCol(), id);
+  if (!uid) return null;
+  const ref = sdk.doc(userNotificationsCol(uid), id);
   await sdk.updateDoc(ref, patch);
   const snap = await sdk.getDoc(ref);
   return snap.exists() ? noticeFrom({ id: snap.id, ...snap.data() }) : null;
@@ -482,12 +448,8 @@ export function subscribeNotificationFeed(handler, session = getSession()) {
     }
 
     const sdk = getFirestoreSdk();
-    const buckets = { user: [], legacy: [], email: [] };
-    const publish = () => emit(sortNotices(dedupeNotices([
-      ...buckets.user,
-      ...buckets.legacy,
-      ...buckets.email,
-    ])));
+    const buckets = { user: [] };
+    const publish = () => emit(sortNotices(dedupeNotices(buckets.user)));
     const stops = [];
 
     const listen = (bucket, collectionRef, constraints) => {
@@ -502,16 +464,6 @@ export function subscribeNotificationFeed(handler, session = getSession()) {
 
     if (session.id) {
       listen("user", userNotificationsCol(session.id), [
-        sdk.orderBy("createdAt", "desc"),
-      ]);
-      listen("legacy", legacyNoticesCol(), [
-        sdk.where("userId", "==", session.id),
-        sdk.orderBy("createdAt", "desc"),
-      ]);
-    }
-    if (session.email) {
-      listen("email", legacyNoticesCol(), [
-        sdk.where("email", "==", String(session.email).trim().toLowerCase()),
         sdk.orderBy("createdAt", "desc"),
       ]);
     }

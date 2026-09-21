@@ -385,29 +385,34 @@ exports.adminGetOverview = async (request) => {
     db().collection(TICKETS).orderBy("createdAt", "desc").limit(5).get().catch(() => db().collection(TICKETS).limit(5).get()),
   ]);
 
-  const users = recentUserSnap.docs.map(serializeUser);
+  const users = recentUserSnap.docs
+    .map(serializeUser)
+    .filter((user) => user.role !== ROLES.ADMIN);
   const tickets = recentTicketSnap.docs.map(serializeTicket);
   const plus = plusCount + familyPlanCount + circlePlanCount;
+  // Admins are platform staff, not member accounts: exclude them from the
+  // "Users" total, the Free bucket, and the unset-role remainder.
+  const nonAdminCount = Math.max(0, userCount - adminCount);
   const byRole = {
     family: familyCount,
     caregiver: caregiverCount,
     practitioner: practitionerCount,
     admin: adminCount,
-    unset: Math.max(0, userCount - familyCount - caregiverCount - practitionerCount - adminCount),
+    unset: Math.max(0, nonAdminCount - familyCount - caregiverCount - practitionerCount),
   };
 
   await writeAudit(admin, "overview.viewed");
   return {
     generatedAt: new Date().toISOString(),
     counts: {
-      users: userCount,
+      users: nonAdminCount,
       families: familyCount,
       caregivers: caregiverCount,
       practitioners: practitionerCount,
       admins: adminCount,
       seniors: seniorCount,
       plus,
-      free: Math.max(0, userCount - plus),
+      free: Math.max(0, nonAdminCount - plus),
       suspended: suspendedCount,
       pendingInvites,
       openTickets,
@@ -427,7 +432,12 @@ exports.adminListUsers = async (request) => {
   if (role && role !== "all") queryRef = queryRef.where("role", "==", role);
   const snap = await queryRef.limit(limit + 1).get();
   const hasMore = snap.docs.length > limit;
-  const users = filterUsers(snap.docs.slice(0, limit).map(serializeUser), { role: "all", status, query });
+  let users = filterUsers(snap.docs.slice(0, limit).map(serializeUser), { role: "all", status, query });
+  // The default "all roles" list is member accounts only; admins appear under
+  // the explicit Admin role filter.
+  if (!role || role === "all") {
+    users = users.filter((user) => user.role !== ROLES.ADMIN);
+  }
   users.sort((a, b) => String(a.displayName || a.email).localeCompare(String(b.displayName || b.email)));
   return { users, total: users.length, hasMore };
 };

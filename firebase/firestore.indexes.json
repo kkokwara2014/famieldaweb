@@ -1199,6 +1199,34 @@
       ]
     },
     {
+      "collectionGroup": "scheduleVisits",
+      "fieldPath": "professionalId",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scheduleVisits",
+      "fieldPath": "caregiverId",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
       "collectionGroup": "appointments",
       "fieldPath": "assignedUserId",
       "indexes": [

@@ -516,6 +516,11 @@ service cloud.firestore {
           && (!('liveAvailability' in request.resource.data)
             || validLiveAvailability(request.resource.data.liveAvailability))
           && (!('professionalVerification' in request.resource.data)
+            // Only validate the status set when the owner is actually changing
+            // the map. Otherwise an admin-set terminal status (verified /
+            // rejected / suspended) would block every unrelated owner write.
+            || !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['professionalVerification'])
             || validProfessionalVerification(
               request.resource.data.professionalVerification,
               true)))
@@ -708,7 +713,7 @@ service cloud.firestore {
           // to care-summary viewers and the linked senior.
           || ((canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId))
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'statusUpdatedBy', 'statusUpdatedAt', 'updatedAt'
+              'status', 'mobileStatus', 'statusUpdatedBy', 'statusUpdatedAt', 'updatedAt'
             ])
             && validCareShiftStatus(request.resource.data.status)
             && (!('statusUpdatedBy' in request.resource.data)
@@ -724,7 +729,7 @@ service cloud.firestore {
               'checkInAt', 'checkInLocation', 'checkInBy',
               'checkOutAt', 'checkOutLocation', 'checkOutBy',
               'completedTasks', 'visitDurationMinutes',
-              'status', 'statusUpdatedBy', 'statusUpdatedAt', 'updatedAt'
+              'status', 'mobileStatus', 'statusUpdatedBy', 'statusUpdatedAt', 'updatedAt'
             ])
             && validCareShiftStatus(request.resource.data.status)
             && request.resource.data.statusUpdatedBy == request.auth.uid
@@ -763,7 +768,7 @@ service cloud.firestore {
         allow update: if canEditSenior(seniorId)
           || ((canViewCareSummary(seniorId) || isLinkedSeniorUser(seniorId))
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'completedAt', 'statusUpdatedBy', 'statusUpdatedAt',
+              'status', 'mobileStatus', 'completedAt', 'statusUpdatedBy', 'statusUpdatedAt',
               'lastCompletedAt', 'lastCompletedBy', 'completionCount', 'updatedAt'
             ])
             && validCareTaskStatus(request.resource.data.status));

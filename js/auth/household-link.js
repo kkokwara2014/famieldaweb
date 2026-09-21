@@ -14,8 +14,10 @@ async function firstId(run) {
   try {
     const ids = await run();
     return ids.find(Boolean) || null;
-  } catch (error) {
-    logger.warn("Could not look up a shared household.", error);
+  } catch {
+    // Best-effort lookup. The seniors/circleMembers queries cannot be proven
+    // against the security rules (rules are not filters), so a denial here is
+    // expected for users without a household — not an error worth logging.
     return null;
   }
 }

@@ -288,6 +288,10 @@ async function sendPush(notice) {
 exports.onNotificationCreated = async (event) => {
   const data = event.data?.data();
   if (!data) return;
+  // The mobile pipeline (functions/src/notifications/helpers.ts deliverToUsers)
+  // writes the inbox doc and dispatches FCM itself. Skip those so the same
+  // notification is not pushed twice (mobile + this web trigger).
+  if (data.deliverySource === "mobile") return;
   await sendPush({ id: event.params.notificationId, ...data });
 };
 

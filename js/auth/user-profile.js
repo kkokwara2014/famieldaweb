@@ -86,7 +86,7 @@ export function profileFromAuthUser(firebaseUser, extra = {}) {
 
   return createUser({
     id: firebaseUser.uid,
-    email: firebaseUser.email ?? extra.email ?? "",
+    email: String(firebaseUser.email ?? extra.email ?? "").trim().toLowerCase(),
     displayName: extra.displayName || extra.name || extra.fullName || extra.full_name || joinedName(extra) || firebaseUser.displayName || "",
     firstName: extra.firstName || extra.first_name || "",
     lastName: extra.lastName || extra.last_name || "",
@@ -151,7 +151,7 @@ function mappedProfile(firebaseUser, data, extras = {}) {
 async function touchLastLogin(ref, sdk, firebaseUser, data) {
   try {
     await sdk.updateDoc(ref, omitUndefined({
-      email: firebaseUser.email ?? data.email ?? "",
+      email: String(firebaseUser.email ?? data.email ?? "").trim().toLowerCase(),
       emailVerified: Boolean(firebaseUser.emailVerified),
       lastLoginAt: sdk.serverTimestamp(),
       lastLoginPlatform: AUTH.PLATFORM,
@@ -182,7 +182,7 @@ export async function loadOrCreateUserProfile(firebaseUser, extras = {}) {
 
   const profile = omitUndefined({
     uid: firebaseUser.uid,
-    email: firebaseUser.email ?? extras.email ?? "",
+    email: String(firebaseUser.email ?? extras.email ?? "").trim().toLowerCase(),
     displayName: extras.displayName || joinedName(extras) || firebaseUser.displayName || "",
     firstName: extras.firstName || extras.first_name || undefined,
     lastName: extras.lastName || extras.last_name || undefined,
