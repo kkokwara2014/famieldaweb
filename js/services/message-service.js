@@ -247,7 +247,18 @@ async function readMessages(filter = {}) {
     return { items, hasMore: items.length >= limit };
   }
 
-  const constraints = [sdk.where("conversationId", "==", filter.conversationId)];
+  // The rules authorize a circle-message list only when the query constrains
+  // BOTH `seniorId` and `type == 'circle'` (the read branch calls
+  // `isActiveCircleMember(resource.data.seniorId)`, so Firestore must be able
+  // to prove the query stays inside the rule). A conversationId-only filter is
+  // denied.
+  const isCircle = Boolean(filter.circle && filter.seniorId);
+  const constraints = isCircle
+    ? [
+        sdk.where("seniorId", "==", filter.seniorId),
+        sdk.where("type", "==", CONVERSATION_TYPES.CIRCLE),
+      ]
+    : [sdk.where("conversationId", "==", filter.conversationId)];
   let page;
   try {
     page = await collectionPage(messagesCol(), [
@@ -263,8 +274,10 @@ async function readMessages(filter = {}) {
   }
 
   let items = page.items.slice().reverse();
-  const aliasId = filter.aliasConversationId
-    || (filter.seniorId ? circleConversationId(filter.seniorId) : "");
+  const aliasId = isCircle
+    ? ""
+    : (filter.aliasConversationId
+      || (filter.seniorId ? circleConversationId(filter.seniorId) : ""));
   if (aliasId && aliasId !== filter.conversationId && !filter.startAfter) {
     const aliasDocs = await collectionDocs(messagesCol(), [
       sdk.where("conversationId", "==", aliasId),
@@ -358,6 +371,7 @@ async function ensureCircleConversation(ctx) {
     if (sameKeys) return existing;
     return saveConversationRecord({
       ...existing,
+      familyId: ctx.senior.familyId || existing.familyId || "",
       type: CONVERSATION_TYPES.CIRCLE,
       pairKey,
       participantKeys,
@@ -369,6 +383,7 @@ async function ensureCircleConversation(ctx) {
   return saveConversationRecord(createConversation({
     id: usesLiveAuth() ? "" : `conv-circle-${ctx.senior.id}`,
     seniorId: ctx.senior.id,
+    familyId: ctx.senior.familyId || "",
     type: CONVERSATION_TYPES.CIRCLE,
     pairKey,
     participantKeys,
@@ -395,6 +410,7 @@ async function ensureDirectConversation(ctx, other) {
   return saveConversationRecord(createConversation({
     id: usesLiveAuth() ? "" : newId("conv"),
     seniorId: ctx.senior.id,
+    familyId: ctx.senior.familyId || "",
     type: CONVERSATION_TYPES.DIRECT,
     pairKey,
     participantKeys: keys,
@@ -452,7 +468,7 @@ function mapConversation(conversation, ctx, now) {
     otherName: other?.name || title,
     photoURL: other?.photoURL || null,
     isCircle: conversation.type === CONVERSATION_TYPES.CIRCLE,
-    isMine: conversation.lastAuthorKey === sessionKey,
+    isMine: (conversation.lastAuthorKey || conversation.lastAuthorId) === sessionKey,
   };
 }
 
@@ -534,6 +550,8 @@ export async function getConversationThread(conversationId, session = getSession
   }
   const page = await readMessages({
     conversationId: conversation.id,
+    seniorId: conversation.seniorId,
+    circle: conversation.type === CONVERSATION_TYPES.CIRCLE,
     aliasConversationId: conversation.type === CONVERSATION_TYPES.CIRCLE
       ? circleConversationId(conversation.seniorId)
       : "",
@@ -603,7 +621,13 @@ export async function sendConversationMessage(input = {}, session = getSession()
     id: usesLiveAuth() ? "" : newId("msg"),
     conversationId: conversation.id,
     seniorId: ctx.senior.id,
+    familyId: ctx.senior.familyId || "",
     type: conversation.type,
+    senderId: ctx.session.id,
+    senderName: ctx.session.displayName || ctx.actor.name,
+    text: body,
+    messageType: "text",
+    readBy: { [ctx.session.id]: now },
     authorId: ctx.session.id,
     authorKey: ctx.sessionKey,
     author: ctx.session.displayName || ctx.actor.name,
@@ -642,6 +666,8 @@ export async function listMessages(seniorId) {
     if (!circle) return [];
     return (await readMessages({
       conversationId: circle.id,
+      seniorId,
+      circle: true,
       aliasConversationId: circleConversationId(seniorId),
       limit: QUERY_LIMITS.PAGE,
     })).items

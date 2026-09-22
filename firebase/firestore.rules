@@ -391,7 +391,7 @@ service cloud.firestore {
     function validMedicationFrequency(value) {
       return value in [
         'once', 'daily', 'twice_daily', 'three_times', 'weekly', 'every_other', 'as_needed',
-        'onceDaily', 'twiceDaily', 'threeTimesDaily', 'fourTimesDaily', 'everyOtherDay', 'custom'
+        'onceDaily', 'twiceDaily', 'threeTimesDaily', 'fourTimesDaily', 'everyOtherDay', 'asNeeded', 'custom'
       ];
     }
 
@@ -666,7 +666,7 @@ service cloud.firestore {
           && 'familyId' in resource.data
           && resource.data.familyId is string
           && isFamilyMember(resource.data.familyId))
-        || (isSignedIn() && 'memberIds' in resource.data && request.auth.uid in resource.data.memberIds)
+        || (isSignedIn() && 'createdBy' in resource.data && resource.data.createdBy == request.auth.uid)
         || canViewFullSenior(seniorId)
         || isLinkedSeniorUser(seniorId);
       // Senior creation/archive/purge are server-authoritative (Admin SDK).
@@ -943,7 +943,7 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'lastMessage', 'lastMessageAt', 'lastMessageBody', 'lastAuthorId',
           'lastAuthorKey', 'lastAuthorName', 'updatedAt', 'readAtBy', 'unreadCount', 'title',
-          'participantKeys', 'participantIds'
+          'participantKeys', 'participantIds', 'familyId'
         ]);
       allow delete: if isPlatformAdmin();
     }

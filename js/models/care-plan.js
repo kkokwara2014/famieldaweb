@@ -6,10 +6,20 @@ import {
   CARE_TASK_STATUS,
 } from "../config/constants.js";
 
+const RECURRENCE_FROM_FREQUENCY = {
+  [CARE_TASK_FREQUENCY.ONCE]: "none",
+  [CARE_TASK_FREQUENCY.DAILY]: "daily",
+  [CARE_TASK_FREQUENCY.WEEKLY]: "weekly",
+  [CARE_TASK_FREQUENCY.MONTHLY]: "weekly",
+  [CARE_TASK_FREQUENCY.AS_NEEDED]: "none",
+};
+
 export function createCarePlan(data = {}) {
   return {
     id: data.id ?? "",
     seniorId: data.seniorId ?? "",
+    // Mobile-canonical field (the mobile app reads this name).
+    familyId: data.familyId ?? "",
     title: data.title ?? "",
     goal: data.goal ?? "",
     notes: data.notes ?? "",
@@ -26,25 +36,45 @@ export function createCarePlan(data = {}) {
 }
 
 export function createCarePlanTask(data = {}) {
+  const title = data.title ?? "";
+  const notes = data.notes ?? "";
+  const status = data.status ?? CARE_TASK_STATUS.OPEN;
+  const frequency = data.frequency ?? CARE_TASK_FREQUENCY.DAILY;
+  const dueDate = data.dueDate ?? null;
+  const assignedCaregiverUserId = data.assignedCaregiverUserId ?? data.assignedUserId ?? "";
+  const assignedCaregiverName = data.assignedCaregiverName ?? data.assignedDisplayName ?? "";
   return {
     id: data.id ?? "",
-    planId: data.planId ?? "",
+    // Mobile-canonical fields (the mobile app reads these names).
+    familyId: data.familyId ?? "",
     seniorId: data.seniorId ?? "",
-    title: data.title ?? "",
-    notes: data.notes ?? "",
-    category: data.category ?? CARE_TASK_CATEGORY.OTHER,
+    planId: data.planId ?? "",
+    title,
+    notes,
+    name: data.name ?? title,
+    description: data.description ?? notes,
+    scheduledAt: data.scheduledAt ?? dueDate,
+    recurrence: data.recurrence ?? RECURRENCE_FROM_FREQUENCY[frequency] ?? "daily",
+    frequency,
+    status,
+    mobileStatus: data.mobileStatus ?? (status === CARE_TASK_STATUS.OPEN ? "pending" : status),
     priority: data.priority ?? CARE_TASK_PRIORITY.MEDIUM,
-    frequency: data.frequency ?? CARE_TASK_FREQUENCY.DAILY,
-    dueDate: data.dueDate ?? null,
+    seriesId: data.seriesId ?? "",
+    assignedUserId: data.assignedUserId ?? assignedCaregiverUserId,
+    assignedDisplayName: data.assignedDisplayName ?? assignedCaregiverName,
+    completedAt: data.completedAt ?? null,
+    statusUpdatedBy: data.statusUpdatedBy ?? "",
+    // Web fields (kept; aliases of the canonical ones above).
+    category: data.category ?? CARE_TASK_CATEGORY.OTHER,
+    dueDate,
     dueTime: data.dueTime ?? "",
     weekday: data.weekday ?? null,
     repeatUntil: data.repeatUntil ?? null,
     notesLog: Array.isArray(data.notesLog) ? data.notesLog.map((item) => createCareTaskNote(item)) : [],
     assignedCaregiverId: data.assignedCaregiverId ?? "",
-    assignedCaregiverUserId: data.assignedCaregiverUserId ?? "",
+    assignedCaregiverUserId,
     assignedCaregiverEmail: data.assignedCaregiverEmail ?? "",
-    assignedCaregiverName: data.assignedCaregiverName ?? "",
-    status: data.status ?? CARE_TASK_STATUS.OPEN,
+    assignedCaregiverName,
     lastCompletedAt: data.lastCompletedAt ?? null,
     lastCompletedBy: data.lastCompletedBy ?? "",
     lastCompletedByName: data.lastCompletedByName ?? "",

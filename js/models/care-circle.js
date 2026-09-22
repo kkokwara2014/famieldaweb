@@ -3,11 +3,24 @@ import { permissionsForRole } from "../config/care-circle.js";
 
 export function createCareCircleMember(data = {}) {
   const role = data.role ?? CARE_CIRCLE_ROLES.MEMBER;
+  const displayName = data.displayName ?? data.name ?? "";
+  const photoUrl = data.photoUrl ?? data.photoURL ?? null;
   return {
     id: data.id ?? "",
     seniorId: data.seniorId ?? "",
+    // Mobile-canonical fields (the mobile app reads these names).
+    familyId: data.familyId ?? "",
     userId: data.userId ?? null,
-    name: data.name ?? "",
+    displayName,
+    photoUrl,
+    seniorName: data.seniorName ?? "",
+    isPrimaryCaregiver: Boolean(data.isPrimaryCaregiver),
+    isEmergencyContact: Boolean(data.isEmergencyContact),
+    invitationId: data.invitationId ?? null,
+    joinedAt: data.joinedAt ?? data.startedAt ?? null,
+    endedAt: data.endedAt ?? null,
+    // Web fields (kept; aliases of the canonical ones above).
+    name: data.name ?? displayName,
     email: data.email ?? "",
     phone: data.phone ?? "",
     phoneCountry: data.phoneCountry ?? "",
@@ -24,7 +37,7 @@ export function createCareCircleMember(data = {}) {
     invitedBy: data.invitedBy ?? null,
     invitedAt: data.invitedAt ?? null,
     respondedAt: data.respondedAt ?? null,
-    photoURL: data.photoURL ?? null,
+    photoURL: photoUrl,
     createdAt: data.createdAt ?? null,
     updatedAt: data.updatedAt ?? null,
   };

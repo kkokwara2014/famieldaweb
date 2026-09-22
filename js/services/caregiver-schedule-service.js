@@ -83,6 +83,14 @@ async function logVisitActivity(visit, extra = {}, session = getSession()) {
   }
 }
 
+function toTimestamp(sdk, value) {
+  if (!value) return null;
+  if (typeof value.toDate === "function") return value;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return sdk?.Timestamp?.fromDate ? sdk.Timestamp.fromDate(date) : null;
+}
+
 function toIso(value) {
   if (!value) return null;
   if (typeof value === "string") return value;
@@ -409,6 +417,11 @@ async function writeVisitReport(visit, input = {}, session, { note = false } = {
     activities: concerns ? ["observation"] : [],
     notes: summary || noteBody,
     attachments: [],
+    seniorName: visit.seniorName || "",
+    caregiverId: visit.caregiverMemberId || "",
+    caregiverDisplayName: caregiverDisplayName || "",
+    professionalId: visit.caregiverUserId || "",
+    shiftStartAt: toTimestamp(sdk, visit.shiftStartAt || visit.startsAt),
     summary,
     mood,
     meals: String(input.meals || "").trim(),
@@ -422,10 +435,6 @@ async function writeVisitReport(visit, input = {}, session, { note = false } = {
     createdAt: sdk.serverTimestamp(),
     updatedAt: sdk.serverTimestamp(),
   };
-  if (visit.seniorName) data.seniorName = visit.seniorName;
-  if (visit.caregiverMemberId) data.caregiverId = visit.caregiverMemberId;
-  if (caregiverDisplayName) data.caregiverDisplayName = caregiverDisplayName;
-  if (visit.caregiverUserId) data.professionalId = visit.caregiverUserId;
   await sdk.setDoc(ref, data);
   return { id: ref.id, ...data };
 }

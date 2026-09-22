@@ -217,7 +217,7 @@ export async function listSeniorsOwnedBy(userId) {
   const snap = await sdk.getDocs(
     sdk.query(
       seniorsCol(),
-      sdk.where("ownerId", "==", userId),
+      sdk.where("createdBy", "==", userId),
       sdk.limit(QUERY_LIMITS.LOOKUP),
     ),
   );
@@ -242,6 +242,7 @@ export async function createSeniorProfile(input, session = getSession()) {
   const draft = createSenior({
     ...input,
     ownerId: session.id,
+    createdBy: session.id,
     memberIds: [...new Set([session.id, ...(input.memberIds ?? [])])],
     emergencyContacts: contacts,
     createdAt: now,

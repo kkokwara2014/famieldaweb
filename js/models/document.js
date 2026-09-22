@@ -13,6 +13,7 @@ export function createDocument(data = {}) {
     contentType: data.contentType ?? "",
     size: Number(data.size) || 0,
     storagePath: data.storagePath ?? "",
+    downloadUrl: data.downloadUrl ?? null,
     uploadedBy: data.uploadedBy ?? "",
     uploadedByName: data.uploadedByName ?? "",
     createdAt: data.createdAt ?? null,

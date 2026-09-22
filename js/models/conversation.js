@@ -4,6 +4,7 @@ export function createConversation(data = {}) {
   return {
     id: data.id ?? "",
     seniorId: data.seniorId ?? "",
+    familyId: data.familyId ?? "",
     type: data.type ?? CONVERSATION_TYPES.DIRECT,
     pairKey: data.pairKey ?? "",
     participantKeys: Array.isArray(data.participantKeys) ? [...data.participantKeys] : [],

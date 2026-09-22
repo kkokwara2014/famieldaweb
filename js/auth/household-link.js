@@ -45,7 +45,7 @@ export async function findSeniorIdForUser(profile) {
 
   const owned = await firstId(() => queryIds(
     seniorsCol(),
-    [sdk.where("ownerId", "==", profile.id)],
+    [sdk.where("createdBy", "==", profile.id)],
     (id) => id,
   ));
   if (owned) return owned;

@@ -33,7 +33,7 @@ import { createCarePlan, createCarePlanCompletion, createCarePlanTask, createCar
 import { mockCarePlanCompletions, mockCarePlans, mockCarePlanTasks } from "./mock-data.js";
 import { storage } from "../core/storage.js";
 import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { carePlansCol, carePlanTasksCol, carePlanCompletionsCol } from "../core/firestore-paths.js";
+import { carePlansCol, carePlanTasksCol, carePlanCompletionsCol, seniorsCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession } from "../auth/session.js";
 import { getSeniorForUser } from "./senior-service.js";
@@ -263,6 +263,14 @@ async function readTaskById(id, seniorId) {
   return taskFrom({ id: snap.id, ...snap.data() });
 }
 
+function toTimestamp(sdk, value) {
+  if (!value) return null;
+  if (typeof value.toDate === "function") return value;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return sdk?.Timestamp?.fromDate ? sdk.Timestamp.fromDate(date) : null;
+}
+
 async function savePlan(plan) {
   const record = planFrom({ ...plan, updatedAt: nowIso() });
   if (!usesLiveAuth()) return planFrom(writeLocalRecord(PLANS_KEY, record));
@@ -293,7 +301,20 @@ async function saveTask(task) {
     id: ref.id,
     assignedCaregiverEmail: String(record.assignedCaregiverEmail || "").trim().toLowerCase(),
   });
-  const data = { ...payload, updatedAt: sdk.serverTimestamp() };
+  let familyId = String(payload.familyId || "").trim();
+  if (!familyId && record.seniorId) {
+    const seniorSnap = await sdk.getDoc(sdk.doc(seniorsCol(), record.seniorId));
+    familyId = String(seniorSnap.data()?.familyId || "").trim();
+  }
+  const scheduledAt = payload.scheduledAt
+    ? toTimestamp(sdk, payload.scheduledAt)
+    : (payload.dueDate ? toTimestamp(sdk, payload.dueDate) : null);
+  const data = {
+    ...payload,
+    familyId,
+    scheduledAt,
+    updatedAt: sdk.serverTimestamp(),
+  };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
   await sdk.setDoc(ref, data, { merge: true });
   return taskFrom({ ...record, id: ref.id });

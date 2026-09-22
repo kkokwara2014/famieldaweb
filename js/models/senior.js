@@ -20,6 +20,7 @@ export function createEmergencyContact(data = {}) {
 }
 
 export function createCarePreferences(data = {}) {
+  if (typeof data === "string") return { notes: data };
   return {
     preferredLanguage: data.preferredLanguage ?? "",
     mobility: data.mobility ?? "",
@@ -58,6 +59,8 @@ export function createCareStatus(data = {}) {
 export function createSenior(data = {}) {
   const displayName = data.displayName || data.name || data.fullName || data.seniorName || "";
   const ownerId = data.ownerId || data.owner_id || data.createdBy || "";
+  const createdBy = data.createdBy || ownerId || "";
+  const photoUrl = data.photoUrl || data.photoURL || data.imageUrl || null;
   const memberIds = Array.isArray(data.memberIds)
     ? data.memberIds.filter(Boolean)
     : Array.isArray(data.members)
@@ -65,9 +68,26 @@ export function createSenior(data = {}) {
       : ownerId
         ? [ownerId]
         : [];
+  const importantInfo = createImportantInfo(data.importantInfo);
+  const address = data.address ?? data.location ?? "";
+  const location = data.location ?? (typeof address === "string" ? address : "");
 
   return {
     id: data.id ?? "",
+    // Mobile-canonical fields (the mobile app reads these names).
+    createdBy,
+    familyId: data.familyId ?? "",
+    status: data.status ?? "active",
+    name: displayName,
+    photoUrl,
+    preferredHospital: data.preferredHospital ?? importantInfo.hospitalPreference ?? "",
+    primaryPhysician: data.primaryPhysician ?? importantInfo.primaryPhysician ?? "",
+    mobilityInfo: data.mobilityInfo ?? "",
+    dietaryRequirements: data.dietaryRequirements ?? "",
+    emergencyInformation: data.emergencyInformation ?? {},
+    notes: data.notes ?? "",
+    linkedUserId: data.linkedUserId ?? null,
+    // Web fields (kept; derived from the canonical ones above).
     ownerId,
     memberIds,
     displayName,
@@ -75,15 +95,15 @@ export function createSenior(data = {}) {
     dateOfBirth: data.dateOfBirth || data.dob || data.date_of_birth || "",
     gender: data.gender ?? "",
     phone: data.phone ?? "",
-    location: data.location ?? "",
-    address: data.address ?? "",
-    photoURL: data.photoURL || data.photoUrl || data.imageUrl || null,
+    location,
+    address,
+    photoURL: photoUrl,
     conditions: asList(data.conditions),
     medications: asList(data.medications),
     allergies: asList(data.allergies),
     emergencyContacts: (data.emergencyContacts ?? []).map((contact) => createEmergencyContact(contact)),
     carePreferences: createCarePreferences(data.carePreferences),
-    importantInfo: createImportantInfo(data.importantInfo),
+    importantInfo,
     care: createCareStatus(data.care),
     createdAt: data.createdAt ?? null,
     updatedAt: data.updatedAt ?? null,

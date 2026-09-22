@@ -1094,11 +1094,17 @@ export async function listMembershipsForSession(session = getSession()) {
   if (session.seniorId) seniorIds.add(session.seniorId);
   if (session.id) {
     const [owned, memberOf] = await Promise.all([
-      collectionDocs(seniorsCol(), [sdk.where("ownerId", "==", session.id)]),
-      collectionDocs(seniorsCol(), [sdk.where("memberIds", "array-contains", session.id)]),
+      collectionDocs(seniorsCol(), [sdk.where("createdBy", "==", session.id)]),
+      sdk.getDocs(sdk.query(
+        sdk.collectionGroup("circleMembers"),
+        sdk.where("userId", "==", session.id),
+      )),
     ]);
     owned.forEach((doc) => seniorIds.add(doc.id));
-    memberOf.forEach((doc) => seniorIds.add(doc.id));
+    memberOf.docs.forEach((doc) => {
+      const seniorId = doc.ref.parent.parent?.id;
+      if (seniorId) seniorIds.add(seniorId);
+    });
   }
 
   const docs = (await Promise.all(

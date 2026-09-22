@@ -27,7 +27,7 @@ import { createScheduleEvent } from "../models/schedule-event.js";
 import { mockAppointments } from "./mock-data.js";
 import { storage } from "../core/storage.js";
 import { getFirestoreSdk, usesLiveAuth } from "../core/firebase.js";
-import { appointmentsCol } from "../core/firestore-paths.js";
+import { appointmentsCol, seniorsCol } from "../core/firestore-paths.js";
 import { QUERY_LIMITS } from "../config/performance.js";
 import { getSession } from "../auth/session.js";
 import { getSeniorForUser } from "./senior-service.js";
@@ -52,6 +52,14 @@ function toIso(value) {
   if (typeof value.toDate === "function") return value.toDate().toISOString();
   if (value instanceof Date) return value.toISOString();
   return null;
+}
+
+function toTimestamp(sdk, value) {
+  if (!value) return null;
+  if (typeof value.toDate === "function") return value;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return sdk?.Timestamp?.fromDate ? sdk.Timestamp.fromDate(date) : null;
 }
 
 function emailsEqual(a, b) {
@@ -188,7 +196,17 @@ async function saveAppointmentRecord(appointment) {
     id: ref.id,
     practitionerEmail: String(record.practitionerEmail || "").trim().toLowerCase(),
   });
-  const data = { ...payload, updatedAt: sdk.serverTimestamp() };
+  let familyId = String(payload.familyId || "").trim();
+  if (!familyId && record.seniorId) {
+    const seniorSnap = await sdk.getDoc(sdk.doc(seniorsCol(), record.seniorId));
+    familyId = String(seniorSnap.data()?.familyId || "").trim();
+  }
+  const data = {
+    ...payload,
+    familyId,
+    scheduledAt: toTimestamp(sdk, payload.scheduledAt),
+    updatedAt: sdk.serverTimestamp(),
+  };
   if (!payload.createdAt) data.createdAt = sdk.serverTimestamp();
   await sdk.setDoc(ref, data, { merge: true });
   return appointmentFrom({ ...record, id: ref.id });
